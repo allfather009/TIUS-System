@@ -200,10 +200,11 @@ export function CustomSelect({
       spaceInContainerBelow = parentRect.bottom - rect.bottom;
     }
 
-    // If space below in container or viewport is less than estimated menu height, and space above has room
+    // Only flip to top if space below is genuinely constrained AND there is ample room above without colliding with headers
     if (
-      (spaceInContainerBelow < estimatedMenuHeight || spaceBelow < estimatedMenuHeight) &&
-      spaceAbove > 140
+      spaceBelow < 160 &&
+      spaceInContainerBelow < 160 &&
+      spaceAbove > estimatedMenuHeight + 40
     ) {
       return 'top';
     }

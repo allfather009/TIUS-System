@@ -6,6 +6,13 @@ import { X, ShieldAlert, Check, Building2 } from 'lucide-react';
 import { getAcademicRates, getRateForTitle } from '@/lib/services/rateService';
 import { getSystemSettings } from '@/lib/services/systemSettingsService';
 import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select';
+import {
   CustomSelect,
   CustomMultiSelect,
   CustomSelectOption,
@@ -247,13 +254,36 @@ export function EditRoleModal({
             <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
               Select New System Role <span className="text-red-500">*</span>
             </label>
-            <CustomSelect
-              value={selectedRole}
-              onChange={(val) => setSelectedRole(val as UserRole)}
-              options={roleOptions}
-              placeholder="Select a role..."
-              searchable={false}
-            />
+            <Select value={selectedRole} onValueChange={(val) => setSelectedRole(val as UserRole)}>
+              <SelectTrigger className="w-full min-h-[44px] h-11 px-3.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-800 hover:border-slate-300 hover:bg-white focus:ring-2 focus:ring-[#721c3b]/30 focus:border-[#721c3b] focus:bg-white transition-all shadow-xs cursor-pointer">
+                <SelectValue placeholder="Select a role...">
+                  {roleOptions.find((r) => r.value === selectedRole)?.label || selectedRole}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent
+                position="popper"
+                side="bottom"
+                sideOffset={4}
+                className="z-[100] max-h-72 w-[var(--radix-select-trigger-width)] rounded-2xl border border-slate-200 bg-white p-1.5 shadow-2xl"
+              >
+                {roleOptions.map((opt) => (
+                  <SelectItem
+                    key={opt.value}
+                    value={opt.value}
+                    className="rounded-xl px-3 py-2.5 text-xs cursor-pointer focus:bg-[#540225]/10 data-[state=checked]:bg-[#540225]/10 my-0.5"
+                  >
+                    <div className="flex flex-col text-left">
+                      <span className="font-semibold text-slate-900">{opt.label}</span>
+                      {opt.description && (
+                        <span className="text-[10px] text-slate-500 font-normal mt-0.5">
+                          {opt.description}
+                        </span>
+                      )}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <p className="text-[11px] text-slate-500">
               {selectedRole === 'HOD'
                 ? 'Assigning HoD grants approval rights for submitted lecture, lab, and exam supervisory hours.'
@@ -286,6 +316,7 @@ export function EditRoleModal({
                 options={academicTitleOptions}
                 placeholder="Select Title..."
                 variant="amber"
+                placement="bottom"
               />
             </div>
           )}
