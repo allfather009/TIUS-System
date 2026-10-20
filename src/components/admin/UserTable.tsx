@@ -104,8 +104,11 @@ export function UserTable({
       all: directoryUsers.length,
       coordinators: directoryUsers.filter((u) => u.role === 'COORDINATOR').length,
       hods: directoryUsers.filter((u) => u.role === 'HOD').length,
-      accountants: directoryUsers.filter((u) => u.role === 'ACCOUNTANT').length,
+      deans: directoryUsers.filter((u) => u.role === 'DEAN').length,
+      viceDeans: directoryUsers.filter((u) => u.role === 'VICE_DEAN').length,
       teachers: directoryUsers.filter((u) => u.role === 'TEACHER').length,
+      itAdmins: directoryUsers.filter((u) => u.role === 'IT_ADMIN').length,
+      accountants: directoryUsers.filter((u) => u.role === 'ACCOUNTANT').length,
     };
   }, [directoryUsers]);
 
@@ -125,11 +128,32 @@ export function UserTable({
             Super Admin
           </span>
         );
+      case 'IT_ADMIN':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-50 text-cyan-800 border border-cyan-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-600" />
+            IT Support Admin
+          </span>
+        );
       case 'COORDINATOR':
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
             Coordinator
+          </span>
+        );
+      case 'DEAN':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-50 text-purple-800 border border-purple-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-purple-600" />
+            Dean
+          </span>
+        );
+      case 'VICE_DEAN':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-fuchsia-50 text-fuchsia-800 border border-fuchsia-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-600" />
+            Vice Dean
           </span>
         );
       case 'HOD':
@@ -267,6 +291,36 @@ export function UserTable({
               Coordinators ({counts.coordinators})
             </button>
           )}
+          {(counts.deans > 0 || !isReadOnly) && (
+            <button
+              onClick={() => {
+                setSelectedRoleFilter('DEAN');
+                setCurrentPage(1);
+              }}
+              className={`px-3 py-1 rounded-full font-semibold transition-all shrink-0 cursor-pointer ${
+                selectedRoleFilter === 'DEAN'
+                  ? 'bg-purple-600 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              Deans ({counts.deans})
+            </button>
+          )}
+          {(counts.viceDeans > 0 || !isReadOnly) && (
+            <button
+              onClick={() => {
+                setSelectedRoleFilter('VICE_DEAN');
+                setCurrentPage(1);
+              }}
+              className={`px-3 py-1 rounded-full font-semibold transition-all shrink-0 cursor-pointer ${
+                selectedRoleFilter === 'VICE_DEAN'
+                  ? 'bg-fuchsia-600 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              Vice Deans ({counts.viceDeans})
+            </button>
+          )}
           {(counts.hods > 0 || !isReadOnly) && (
             <button
               onClick={() => {
@@ -282,21 +336,6 @@ export function UserTable({
               HoDs ({counts.hods})
             </button>
           )}
-          {(counts.accountants > 0 || !isReadOnly) && (
-            <button
-              onClick={() => {
-                setSelectedRoleFilter('ACCOUNTANT');
-                setCurrentPage(1);
-              }}
-              className={`px-3 py-1 rounded-full font-semibold transition-all shrink-0 cursor-pointer ${
-                selectedRoleFilter === 'ACCOUNTANT'
-                  ? 'bg-amber-600 text-white shadow-2xs'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              Accountants ({counts.accountants})
-            </button>
-          )}
           {(counts.teachers > 0 || !isReadOnly) && (
             <button
               onClick={() => {
@@ -310,6 +349,36 @@ export function UserTable({
               }`}
             >
               Teachers ({counts.teachers})
+            </button>
+          )}
+          {(counts.itAdmins > 0 || !isReadOnly) && (
+            <button
+              onClick={() => {
+                setSelectedRoleFilter('IT_ADMIN');
+                setCurrentPage(1);
+              }}
+              className={`px-3 py-1 rounded-full font-semibold transition-all shrink-0 cursor-pointer ${
+                selectedRoleFilter === 'IT_ADMIN'
+                  ? 'bg-cyan-700 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              IT Support ({counts.itAdmins})
+            </button>
+          )}
+          {(counts.accountants > 0 || !isReadOnly) && (
+            <button
+              onClick={() => {
+                setSelectedRoleFilter('ACCOUNTANT');
+                setCurrentPage(1);
+              }}
+              className={`px-3 py-1 rounded-full font-semibold transition-all shrink-0 cursor-pointer ${
+                selectedRoleFilter === 'ACCOUNTANT'
+                  ? 'bg-amber-600 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              Accountants ({counts.accountants})
             </button>
           )}
         </div>
@@ -399,7 +468,44 @@ export function UserTable({
 
                       {/* Department */}
                       <td className="py-3.5 px-6">
-                        {user.departments && user.departments.length > 1 ? (
+                        {user.role === 'HOD' ? (
+                          (() => {
+                            const managedIds =
+                              user.managed_department_ids && user.managed_department_ids.length > 0
+                                ? user.managed_department_ids
+                                : user.department_ids && user.department_ids.length > 0
+                                ? user.department_ids
+                                : user.department_id
+                                ? [user.department_id]
+                                : [];
+
+                            const deptMap = new Map(departments.map((d) => [d.id, d.name]));
+                            const resolvedNames = managedIds
+                              .map((id) => deptMap.get(id) || id)
+                              .filter(Boolean);
+
+                            const displayNames =
+                              resolvedNames.length > 0
+                                ? resolvedNames
+                                : user.departments && user.departments.length > 0
+                                ? user.departments
+                                : [user.department?.name || 'General Academic Department'];
+
+                            return (
+                              <div className="flex flex-wrap gap-1.5 max-w-xs">
+                                {displayNames.map((name, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs"
+                                  >
+                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-600 shrink-0" />
+                                    <span>{name}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            );
+                          })()
+                        ) : user.departments && user.departments.length > 1 ? (
                           <div className="flex flex-wrap gap-1 max-w-xs">
                             {user.departments.map((deptName, idx) => (
                               <span
@@ -442,13 +548,13 @@ export function UserTable({
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-40">
-                              {session.role === 'SUPER_ADMIN' && (
+                              {session.realUser?.role === 'SUPER_ADMIN' && (
                                 <DropdownMenuItem
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     session.simulateUser(user);
                                   }}
-                                  className="gap-2"
+                                  className="gap-2 cursor-pointer"
                                 >
                                   <Eye className="w-4 h-4" /> Simulate User
                                 </DropdownMenuItem>

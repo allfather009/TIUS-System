@@ -19,10 +19,11 @@ import {
   updateStage,
   updateCourse
 } from '@/lib/services/hierarchyService';
-import { Faculty, Department, Stage, Course } from '@/types/database';
+import { getUsers, updateUserRole } from '@/lib/services/userService';
+import { Faculty, Department, Stage, Course, UniversityUser, UserRole } from '@/types/database';
 import { 
   Folder, FolderOpen, BookOpen, Layers, 
-  Plus, ChevronRight, ChevronDown, Building2, Book, GraduationCap, Lock, ShieldAlert, KeyRound, ArrowLeft, Trash2, MoreVertical, Edit2, AlertCircle
+  Plus, ChevronRight, ChevronDown, Building2, Book, GraduationCap, Lock, ShieldAlert, KeyRound, ArrowLeft, Trash2, MoreVertical, Edit2, AlertCircle, UserCheck, UserX, UserMinus, ShieldCheck, X
 } from 'lucide-react';
 import Link from 'next/link';
 import {
@@ -34,17 +35,18 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 export default function AcademicStructurePage() {
-  const { user, role, isSuperAdmin } = useSession();
+  const { user, role, isSuperAdmin, hasPermission } = useSession();
   const activeRole = role || 'TEACHER';
 
   const isSuper = isSuperAdmin || activeRole === 'SUPER_ADMIN' || user?.role === 'SUPER_ADMIN';
   const isHod = activeRole === 'HOD' || user?.role === 'HOD';
-  const isAuthorized = isSuper || isHod || user?.custom_permissions?.['can_manage_structure'] === true;
+  const isAuthorized = isSuper || isHod || hasPermission?.('can_manage_structure') || user?.custom_permissions?.['can_manage_structure'] === true;
 
   const [faculties, setFaculties] = useState<Faculty[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
+  const [users, setUsers] = useState<UniversityUser[]>([]);
   
   const [loading, setLoading] = useState(true);
   
@@ -59,6 +61,11 @@ export default function AcademicStructurePage() {
   const [editingItem, setEditingItem] = useState<{type: 'faculty' | 'department' | 'stage' | 'course', id: string, item: any} | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState<{isOpen: boolean, type: 'faculty' | 'department' | 'stage' | 'course' | null, id: string, name: string}>({ isOpen: false, type: null, id: '', name: '' });
   
+  // Assign HoD Modal
+  const [assigningHodDept, setAssigningHodDept] = useState<Department | null>(null);
+  const [selectedHodUserId, setSelectedHodUserId] = useState<string>('');
+  const [isSavingHod, setIsSavingHod] = useState(false);
+
   const [formData, setFormData] = useState({ name: '', code: '', level: 1, credits: 3 });
 
   // Extract all department identifiers (names, IDs) assigned to the HoD
@@ -119,7 +126,12 @@ export default function AcademicStructurePage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const data = await getHierarchyData();
+      const [data, usersData] = await Promise.all([
+        getHierarchyData(),
+        getUsers(),
+      ]);
+
+      setUsers(usersData || []);
 
       if (isSuper) {
         setFaculties(data.faculties);
@@ -167,6 +179,22 @@ export default function AcademicStructurePage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const getDepartmentHods = (deptId: string): UniversityUser[] => {
+    return users.filter((u) => {
+      if (u.role !== 'HOD') return false;
+      if (Array.isArray(u.managed_department_ids) && u.managed_department_ids.length > 0) {
+        return u.managed_department_ids.includes(deptId);
+      }
+      return u.department_id === deptId;
+    });
+  };
+
+  const handleOpenAssignHod = (dept: Department) => {
+    setAssigningHodDept(dept);
+    const existingHods = getDepartmentHods(dept.id);
+    setSelectedHodUserId(existingHods.length > 0 ? existingHods[0].id : '');
   };
 
   const showToast = (title: string, desc: string) => {
@@ -283,6 +311,135 @@ export default function AcademicStructurePage() {
     } catch (err: any) {
       console.error(err);
       alert(`Error deleting ${type}: ` + err.message);
+    }
+  };
+
+  const handleSaveHodAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assigningHodDept || !selectedHodUserId) return;
+
+    const selectedUser = users.find((u) => u.id === selectedHodUserId);
+    if (!selectedUser) return;
+
+    // Calculate departments the selected user currently manages
+    const currentManaged =
+      selectedUser.role === 'HOD'
+        ? Array.isArray(selectedUser.managed_department_ids) && selectedUser.managed_department_ids.length > 0
+          ? selectedUser.managed_department_ids
+          : selectedUser.department_id
+          ? [selectedUser.department_id]
+          : []
+        : [];
+
+    const isAlreadyAssigned = currentManaged.includes(assigningHodDept.id);
+
+    // Enforce 2-department maximum limit
+    if (!isAlreadyAssigned && currentManaged.length >= 2) {
+      alert(`Policy violation: ${selectedUser.name} already manages 2 departments. A Head of Department cannot manage more than 2 departments.`);
+      return;
+    }
+
+    setIsSavingHod(true);
+    try {
+      const newManagedIds = Array.from(new Set([...currentManaged, assigningHodDept.id])).slice(0, 2);
+      const primaryDeptId = selectedUser.department_id || assigningHodDept.id;
+      const newDeptNames = newManagedIds
+        .map((id) => departments.find((d) => d.id === id)?.name)
+        .filter((n): n is string => Boolean(n));
+
+      // 1. Update the chosen user to role HOD with newManagedIds
+      const res = await updateUserRole(
+        selectedUser.id,
+        'HOD',
+        primaryDeptId,
+        selectedUser.academic_title,
+        selectedUser.hourly_rate,
+        newManagedIds,
+        newDeptNames,
+        newManagedIds
+      );
+
+      if (!res.success) {
+        throw new Error(res.error || 'Failed to update user role');
+      }
+
+      // 2. If other HoDs currently manage this department, remove it from their managed list
+      const prevHods = getDepartmentHods(assigningHodDept.id);
+      for (const prevHod of prevHods) {
+        if (prevHod.id !== selectedUser.id) {
+          const prevManaged = (prevHod.managed_department_ids || []).filter((id) => id !== assigningHodDept.id);
+          const prevNames = prevManaged
+            .map((id) => departments.find((d) => d.id === id)?.name)
+            .filter((n): n is string => Boolean(n));
+          const nextRole: UserRole = prevManaged.length > 0 ? 'HOD' : 'TEACHER';
+
+          await updateUserRole(
+            prevHod.id,
+            nextRole,
+            prevManaged[0] || null,
+            prevHod.academic_title,
+            prevHod.hourly_rate,
+            prevManaged,
+            prevNames,
+            prevManaged
+          );
+        }
+      }
+
+      showToast(
+        'HoD Assigned',
+        `${selectedUser.name} is now Head of Department for ${assigningHodDept.name}. Total managed: ${newManagedIds.length}/2.`
+      );
+      setAssigningHodDept(null);
+      await loadData();
+    } catch (err: any) {
+      console.error('[Academic Structure] Error assigning HoD:', err);
+      alert(`Error assigning HoD: ` + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingHod(false);
+    }
+  };
+
+  const handleUnassignHod = async (hodToUnassign: UniversityUser) => {
+    if (!assigningHodDept) return;
+    if (
+      !confirm(
+        `Are you sure you want to remove ${hodToUnassign.name} as Head of Department for ${assigningHodDept.name}?`
+      )
+    ) {
+      return;
+    }
+
+    setIsSavingHod(true);
+    try {
+      const updatedManaged = (hodToUnassign.managed_department_ids || []).filter((id) => id !== assigningHodDept.id);
+      const updatedNames = updatedManaged
+        .map((id) => departments.find((d) => d.id === id)?.name)
+        .filter((n): n is string => Boolean(n));
+      const nextRole: UserRole = updatedManaged.length > 0 ? 'HOD' : 'TEACHER';
+
+      await updateUserRole(
+        hodToUnassign.id,
+        nextRole,
+        updatedManaged[0] || null,
+        hodToUnassign.academic_title,
+        hodToUnassign.hourly_rate,
+        updatedManaged,
+        updatedNames,
+        updatedManaged
+      );
+
+      showToast(
+        'HoD Unassigned',
+        `${hodToUnassign.name} has been unassigned from ${assigningHodDept.name}.`
+      );
+      setAssigningHodDept(null);
+      await loadData();
+    } catch (err: any) {
+      console.error('[Academic Structure] Error unassigning HoD:', err);
+      alert(`Error unassigning HoD: ` + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingHod(false);
     }
   };
 
@@ -460,6 +617,37 @@ export default function AcademicStructurePage() {
                                       </div>
                                     </div>
                                     <div className="flex items-center gap-2">
+                                      {/* HoD Badges */}
+                                      {(() => {
+                                        const deptHods = getDepartmentHods(dept.id);
+                                        if (deptHods.length > 0) {
+                                          return (
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                              {deptHods.map((hod) => (
+                                                <span
+                                                  key={hod.id}
+                                                  className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full flex items-center gap-1"
+                                                  title={`Head of Department: ${hod.name} (${(hod.managed_department_ids || [dept.id]).length}/2 depts managed)`}
+                                                >
+                                                  <UserCheck className="w-3 h-3 text-indigo-600" />
+                                                  <span>HoD: {hod.name}</span>
+                                                  {(hod.managed_department_ids?.length || 1) > 1 && (
+                                                    <span className="text-[9px] px-1 py-0.2 bg-indigo-200/60 rounded text-indigo-900 font-bold">
+                                                      2 Depts
+                                                    </span>
+                                                  )}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          );
+                                        }
+                                        return isSuper ? (
+                                          <span className="text-[10px] text-slate-400 italic bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded">
+                                            No HoD Assigned
+                                          </span>
+                                        ) : null;
+                                      })()}
+
                                       <span className="text-[10px] font-semibold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-md">
                                         {deptStages.length} {deptStages.length === 1 ? 'Stage' : 'Stages'}
                                       </span>
@@ -470,12 +658,15 @@ export default function AcademicStructurePage() {
                                           <DropdownMenuTrigger className="p-1.5 rounded-md hover:bg-slate-100 text-slate-500 transition-colors focus:outline-none">
                                             <MoreVertical className="w-4 h-4" />
                                           </DropdownMenuTrigger>
-                                          <DropdownMenuContent align="end" className="w-44 font-semibold text-slate-700">
+                                          <DropdownMenuContent align="end" className="w-52 font-semibold text-slate-700">
                                             <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setAddingTo({ type: 'stage', parentId: dept.id }); setFormData({ name: '', code: '', level: 1, credits: 3 }); }}>
                                               <Plus className="w-3.5 h-3.5 text-blue-500 mr-2" /> Add Stage
                                             </DropdownMenuItem>
                                             {isSuper && (
                                               <>
+                                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleOpenAssignHod(dept); }}>
+                                                  <UserCheck className="w-3.5 h-3.5 text-indigo-600 mr-2" /> Assign Head of Department
+                                                </DropdownMenuItem>
                                                 <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setEditingItem({ type: 'department', id: dept.id, item: dept }); setFormData({ name: dept.name, code: dept.code || '', level: 1, credits: 3 }); }}>
                                                   <Edit2 className="w-3.5 h-3.5 text-amber-500 mr-2" /> Edit Department
                                                 </DropdownMenuItem>
@@ -799,6 +990,210 @@ export default function AcademicStructurePage() {
                 >
                   Save Changes
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Assign Head of Department Modal */}
+      {assigningHodDept && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full border border-slate-200 overflow-hidden text-left">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-700">
+                  <UserCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-headline font-bold text-lg text-slate-800">
+                    Assign Head of Department
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    {assigningHodDept.name} {assigningHodDept.code ? `(${assigningHodDept.code})` : ''}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAssigningHodDept(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/50 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveHodAssignment} className="p-6 space-y-5">
+              {/* Current Assigned HoD Section */}
+              {(() => {
+                const currentHods = getDepartmentHods(assigningHodDept.id);
+                if (currentHods.length > 0) {
+                  return (
+                    <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                      <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+                        Currently Assigned HoD
+                      </div>
+                      <div className="space-y-2">
+                        {currentHods.map((hod) => (
+                          <div key={hod.id} className="flex items-center justify-between bg-white p-2.5 px-3 rounded-xl border border-slate-100">
+                            <div>
+                              <div className="text-xs font-bold text-slate-800">{hod.name}</div>
+                              <div className="text-[11px] text-slate-400 font-mono">{hod.email}</div>
+                              <div className="text-[10px] text-indigo-600 font-semibold mt-0.5">
+                                Manages {(hod.managed_department_ids || [assigningHodDept.id]).length} of 2 allowed depts
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleUnassignHod(hod)}
+                              disabled={isSavingHod}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-red-600 hover:bg-red-50 text-[11px] font-bold transition-colors cursor-pointer border border-red-200"
+                            >
+                              <UserMinus className="w-3.5 h-3.5" />
+                              <span>Unassign</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="p-3 rounded-xl bg-amber-50/60 border border-amber-200 text-xs text-amber-800 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>No Head of Department is currently assigned to this department.</span>
+                  </div>
+                );
+              })()}
+
+              {/* Select Faculty Member to Assign */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Select Faculty Member to Assign as HoD
+                </label>
+                <select
+                  value={selectedHodUserId}
+                  onChange={(e) => setSelectedHodUserId(e.target.value)}
+                  required
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 outline-none bg-white font-medium text-slate-800"
+                >
+                  <option value="">-- Choose a faculty member --</option>
+                  {users.map((u) => {
+                    const managed =
+                      u.role === 'HOD'
+                        ? (u.managed_department_ids || (u.department_id ? [u.department_id] : []))
+                        : [];
+                    const managedCount = managed.length;
+                    const isCurrentForDept = managed.includes(assigningHodDept.id);
+                    return (
+                      <option key={u.id} value={u.id}>
+                        {u.name} ({u.role}{managedCount > 0 ? ` • ${managedCount}/2 depts` : ''}) {isCurrentForDept ? '— Current' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {/* 2-Department Rule Enforcement & Status Preview */}
+              {(() => {
+                const selectedUser = users.find((u) => u.id === selectedHodUserId);
+                if (!selectedUser) return null;
+
+                const currentManaged =
+                  selectedUser.role === 'HOD'
+                    ? Array.isArray(selectedUser.managed_department_ids) && selectedUser.managed_department_ids.length > 0
+                      ? selectedUser.managed_department_ids
+                      : selectedUser.department_id
+                      ? [selectedUser.department_id]
+                      : []
+                    : [];
+
+                const isAlreadyManaging = currentManaged.includes(assigningHodDept.id);
+                const exceeds = !isAlreadyManaging && currentManaged.length >= 2;
+
+                if (exceeds) {
+                  const managedNames = currentManaged
+                    .map((id) => departments.find((d) => d.id === id)?.name || id)
+                    .join(' and ');
+                  return (
+                    <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="font-bold text-red-800 text-xs">
+                          2-Department Assignment Limit Exceeded
+                        </div>
+                        <div className="text-xs text-red-700 mt-1 leading-relaxed">
+                          <strong>{selectedUser.name}</strong> is already assigned to 2 departments ({managedNames}).
+                          Institutional policy strictly enforces a maximum of 2 departments per Head of Department. 
+                          You must unassign them from another department before assigning this one.
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (isAlreadyManaging) {
+                  return (
+                    <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center gap-2.5 text-xs text-emerald-800 font-semibold">
+                      <UserCheck className="w-4 h-4 text-emerald-600" />
+                      <span>{selectedUser.name} is already assigned to this department.</span>
+                    </div>
+                  );
+                }
+
+                const postAssignmentCount = currentManaged.length + 1;
+                return (
+                  <div className="p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-200 flex items-start gap-2.5 text-xs text-indigo-900">
+                    <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-bold">Permitted Assignment (Limit: Max 2 Departments)</div>
+                      <div className="text-[11px] text-indigo-800 mt-0.5">
+                        After saving, {selectedUser.name} will manage <strong>{postAssignmentCount} of 2</strong> allowable departments.
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setAssigningHodDept(null)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                {(() => {
+                  const selectedUser = users.find((u) => u.id === selectedHodUserId);
+                  const currentManaged =
+                    selectedUser?.role === 'HOD'
+                      ? Array.isArray(selectedUser.managed_department_ids) && selectedUser.managed_department_ids.length > 0
+                        ? selectedUser.managed_department_ids
+                        : selectedUser.department_id
+                        ? [selectedUser.department_id]
+                        : []
+                      : [];
+                  const isAlreadyManaging = currentManaged.includes(assigningHodDept.id);
+                  const exceeds = !isAlreadyManaging && currentManaged.length >= 2;
+                  const canSubmit = selectedHodUserId && !exceeds && !isAlreadyManaging && !isSavingHod;
+
+                  return (
+                    <button
+                      type="submit"
+                      disabled={!canSubmit}
+                      className="px-5 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      {isSavingHod ? (
+                        <span>Saving...</span>
+                      ) : (
+                        <>
+                          <UserCheck className="w-3.5 h-3.5" />
+                          <span>Confirm Assignment</span>
+                        </>
+                      )}
+                    </button>
+                  );
+                })()}
               </div>
             </form>
           </div>

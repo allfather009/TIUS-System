@@ -64,28 +64,52 @@ export async function updateUserRole(
   academicTitle?: string | null,
   hourlyRate?: number | null,
   departmentIds?: string[] | null,
-  departmentNames?: string[] | null
+  departmentNames?: string[] | null,
+  managedDepartmentIds?: string[] | null
 ): Promise<{ success: boolean; error?: string; user?: UniversityUser }> {
   try {
     const supabase = createClient();
     
     // Resolve primary department_id: if departmentIds is provided, default to first department
-    const resolvedDeptId =
+    let resolvedDeptId =
       departmentId !== undefined
         ? departmentId
         : departmentIds && departmentIds.length > 0
         ? departmentIds[0]
         : null;
 
+    // Enforce 2-department limit for HoD and clear managed_department_ids for non-HoD
+    let resolvedManagedIds: string[] = [];
+    if (role === 'HOD') {
+      const rawManaged =
+        managedDepartmentIds !== undefined && managedDepartmentIds !== null
+          ? managedDepartmentIds
+          : departmentIds && departmentIds.length > 0
+          ? departmentIds
+          : resolvedDeptId
+          ? [resolvedDeptId]
+          : [];
+      resolvedManagedIds = rawManaged.slice(0, 2);
+      if (!resolvedDeptId && resolvedManagedIds.length > 0) {
+        resolvedDeptId = resolvedManagedIds[0];
+      }
+    } else {
+      resolvedManagedIds = [];
+    }
+
     const updatePayload: Record<string, unknown> = {
       role,
       department_id: resolvedDeptId,
+      managed_department_ids: resolvedManagedIds,
       updated_at: new Date().toISOString(),
     };
 
-    if (departmentIds !== undefined) {
-      updatePayload.department_ids = departmentIds || [];
+    if (role === 'HOD') {
+      updatePayload.department_ids = resolvedManagedIds;
+    } else if (departmentIds !== undefined) {
+      updatePayload.department_ids = resolvedDeptId ? [resolvedDeptId] : [];
     }
+
     if (departmentNames !== undefined) {
       updatePayload.departments = departmentNames || [];
     }
@@ -117,12 +141,29 @@ export async function updateUserRole(
   if (typeof window !== 'undefined') {
     const currentUsers = await getUsers();
     const depts = await getDepartments();
-    const resolvedDeptId =
+    let resolvedDeptId =
       departmentId !== undefined
         ? departmentId
         : departmentIds && departmentIds.length > 0
         ? departmentIds[0]
         : null;
+
+    let resolvedManagedIds: string[] = [];
+    if (role === 'HOD') {
+      const rawManaged =
+        managedDepartmentIds !== undefined && managedDepartmentIds !== null
+          ? managedDepartmentIds
+          : departmentIds && departmentIds.length > 0
+          ? departmentIds
+          : resolvedDeptId
+          ? [resolvedDeptId]
+          : [];
+      resolvedManagedIds = rawManaged.slice(0, 2);
+      if (!resolvedDeptId && resolvedManagedIds.length > 0) {
+        resolvedDeptId = resolvedManagedIds[0];
+      }
+    }
+
     const targetDept = resolvedDeptId ? depts.find((d) => d.id === resolvedDeptId) : null;
 
     const updated: UniversityUser[] = currentUsers.map((u) => {
@@ -131,7 +172,8 @@ export async function updateUserRole(
           ...u,
           role,
           department_id: resolvedDeptId,
-          department_ids: departmentIds !== undefined ? (departmentIds || []) : (u.department_ids || []),
+          managed_department_ids: resolvedManagedIds,
+          department_ids: role === 'HOD' ? resolvedManagedIds : (resolvedDeptId ? [resolvedDeptId] : []),
           departments: departmentNames !== undefined ? (departmentNames || []) : (u.departments || []),
           department: resolvedDeptId !== undefined ? targetDept : u.department,
           academic_title: academicTitle !== undefined ? (academicTitle || null) : (u.academic_title ?? null),
@@ -143,11 +185,11 @@ export async function updateUserRole(
     });
 
     localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(updated));
-    const modifiedUser = updated.find((u) => u.id === userId);
-    return { success: true, user: modifiedUser };
+    const found = updated.find((u) => u.id === userId);
+    return { success: true, user: found };
   }
 
-  return { success: false, error: 'Failed to update user role' };
+  return { success: false, error: 'Failed to update user' };
 }
 
 export async function updateUserPermissions(
@@ -349,8 +391,11 @@ export async function bulkImportUsers(
     const roleStr = (row.role || '').toUpperCase();
     const jobStr = (row.academic_title || '').toUpperCase();
     if (roleStr === 'SUPER_ADMIN' || roleStr.includes('SUPER')) role = 'SUPER_ADMIN';
+    else if (roleStr === 'IT_ADMIN' || roleStr.includes('IT_ADMIN') || roleStr.includes('IT SUPPORT') || roleStr.includes('IT ADMIN')) role = 'IT_ADMIN';
     else if (roleStr === 'COORDINATOR' || roleStr.includes('COORD')) role = 'COORDINATOR';
     else if (roleStr === 'HOD' || roleStr.includes('HEAD') || jobStr.includes('HEAD OF DEPARTMENT')) role = 'HOD';
+    else if (roleStr === 'DEAN' || (roleStr.includes('DEAN') && !roleStr.includes('VICE'))) role = 'DEAN';
+    else if (roleStr === 'VICE_DEAN' || roleStr.includes('VICE DEAN') || roleStr.includes('VICE_DEAN')) role = 'VICE_DEAN';
     else if (roleStr === 'ACCOUNTANT' || roleStr.includes('FINANCE')) role = 'ACCOUNTANT';
     else if (roleStr === 'TEACHER') role = 'TEACHER';
 
@@ -523,8 +568,8 @@ function isTimesheetInActiveCycle(
   return false;
 }
 
-export async function getTeacherPortalData(teacherEmail?: string): Promise<TeacherPortalData> {
-  const targetEmail = teacherEmail ? teacherEmail.toLowerCase().trim() : '';
+export async function getTeacherPortalData(teacherIdentifier?: string): Promise<TeacherPortalData> {
+  const targetIdOrEmail = teacherIdentifier ? teacherIdentifier.trim() : '';
 
   try {
     const supabase = createClient();
@@ -532,12 +577,17 @@ export async function getTeacherPortalData(teacherEmail?: string): Promise<Teach
     const activeCycleName = payrollSettings?.cycle_name || 'Active Cycle: Sep 25 - Oct 25';
     const systemSettings = await getSystemSettings();
 
-    // 1. Fetch teacher record
+    // 1. Fetch faculty member record (supports TEACHER, DEAN, and VICE_DEAN)
     let userQuery = supabase.from('users').select('*, department:departments(*)');
-    if (targetEmail) {
-      userQuery = userQuery.ilike('email', targetEmail);
+    if (targetIdOrEmail) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetIdOrEmail);
+      if (isUuid) {
+        userQuery = userQuery.eq('id', targetIdOrEmail);
+      } else {
+        userQuery = userQuery.ilike('email', targetIdOrEmail);
+      }
     } else {
-      userQuery = userQuery.eq('role', 'TEACHER').limit(1);
+      userQuery = userQuery.in('role', ['TEACHER', 'DEAN', 'VICE_DEAN']).limit(1);
     }
     const { data: userRecList } = await userQuery;
     const userRec = Array.isArray(userRecList) ? userRecList[0] : userRecList;
@@ -572,10 +622,14 @@ export async function getTeacherPortalData(teacherEmail?: string): Promise<Teach
       }
     }
 
-    // 3. Fetch timesheets
+    // 3. Fetch personal timesheets for this faculty beneficiary strictly
     const { data: timesheets, error } = await supabase
       .from('timesheets')
-      .select('*')
+      .select(`
+        *,
+        submitted_by:users!timesheets_submitted_by_id_fkey(id, name, email, academic_title),
+        department_rel:departments(id, name, code)
+      `)
       .eq('teacher_id', userRec.id)
       .order('date', { ascending: false });
 
@@ -585,7 +639,29 @@ export async function getTeacherPortalData(teacherEmail?: string): Promise<Teach
         let status: 'APPROVED' | 'PENDING' | 'PENDING_HOD_APPROVAL' | 'REJECTED' = 'PENDING';
         if (rawStatus === 'APPROVED' || rawStatus === 'PAID') status = 'APPROVED';
         else if (rawStatus === 'REJECTED') status = 'REJECTED';
-        else if (rawStatus === 'PENDING_HOD_APPROVAL') status = 'PENDING_HOD_APPROVAL';
+        else status = 'PENDING';
+
+        const submitterObj = ts.submitted_by as { name?: string } | null;
+        const deptRelObj = ts.department_rel as { name?: string } | null;
+        const submittedByName = submitterObj?.name || departmentHod.name || 'Head of Department';
+        const departmentName = deptRelObj?.name || (ts.department as string) || userRec.department?.name || 'Department of Academic Studies';
+
+        // Extract rejection note if present
+        let rejectionReason: string | undefined = undefined;
+        if (status === 'REJECTED' && ts.notes) {
+          const notesStr = String(ts.notes);
+          const match = notesStr.match(/\[Rejected by Coordinator:\s*([^\]]+)\]/i);
+          if (match) {
+            rejectionReason = match[1].trim();
+          } else if (notesStr.toLowerCase().includes('reject')) {
+            rejectionReason = notesStr.trim();
+          }
+        }
+
+        const rawNotes = (ts.notes as string) || '';
+        const cleanDeliverable = rawNotes.replace(/\[Rejected by Coordinator:[^\]]*\]/g, '').trim() ||
+          (ts.session_type as string) ||
+          'Instructional Extra Session';
 
         return {
           id: (ts.id as string) || `ts-${idx}`,
@@ -593,12 +669,16 @@ export async function getTeacherPortalData(teacherEmail?: string): Promise<Teach
           dayAndTime: new Date(ts.date as string).toLocaleDateString('en-US', { weekday: 'long' }) + ', Session Completed',
           courseCode: (ts.course_code as string) || 'GEN',
           courseColor: (ts.course_code === 'IT204' ? 'amber' : ts.course_code === 'FYP-4' ? 'blue' : ts.course_code === 'EVAL' ? 'purple' : 'red') as 'red' | 'blue' | 'amber' | 'purple',
-          deliverable: (ts.notes as string) || (ts.session_type as string) || 'Instructional Extra Session',
+          deliverable: cleanDeliverable,
           duration: Number(ts.hours) || 0,
           durationFormatted: `${Number(ts.hours).toFixed(1)} hrs`,
-          loggedByName: (status === 'PENDING_HOD_APPROVAL' || status === 'PENDING') ? 'Self-Submitted' : departmentHod.name,
+          loggedByName: submittedByName,
           submissionRef: `#LOG-${9900 - idx * 15}`,
           status,
+          departmentName,
+          submittedByName,
+          sessionType: (ts.session_type as string) || 'Instructional Extra Session',
+          rejectionReason,
         };
       });
 

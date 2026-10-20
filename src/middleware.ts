@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { updateSession } from '@/lib/supabase/middleware';
+import { resolveEffectivePermission } from '@/lib/services/systemSettingsService';
 
 export async function middleware(request: NextRequest) {
   const { supabaseResponse, user, supabase } = await updateSession(request);
@@ -221,12 +222,16 @@ export async function middleware(request: NextRequest) {
     switch (role) {
       case 'SUPER_ADMIN':
         return '/admin/roles';
+      case 'IT_ADMIN':
+        return '/admin/structure';
       case 'COORDINATOR':
         return '/coordinator';
       case 'HOD':
         return '/hod';
       case 'ACCOUNTANT':
         return '/finance';
+      case 'DEAN':
+      case 'VICE_DEAN':
       case 'TEACHER':
         return '/teacher';
       default:
@@ -303,14 +308,51 @@ export async function middleware(request: NextRequest) {
   const isSuperAdmin = userRole === 'SUPER_ADMIN';
   const perms = customPermissions || {};
 
+  // Load dynamic role permissions from system_settings for role governance
+  let rolePermissions: Record<string, Record<string, boolean>> | null = null;
+  if (isAdminRoute || isFinanceRoute) {
+    try {
+      const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/system_settings?select=role_permissions&limit=1`;
+      const res = await fetch(url, {
+        headers: {
+          apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`,
+        },
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.[0]?.role_permissions && typeof data[0].role_permissions === 'object') {
+          rolePermissions = data[0].role_permissions;
+        }
+      }
+    } catch {
+      // fallback to defaults if database query fails
+    }
+  }
+
   // 1. Finance Route (/finance, /finance/*)
   if (isFinanceRoute) {
+    const isArchiveRoute = pathname === '/finance/archive' || pathname.startsWith('/finance/archive/') || pathname.startsWith('/payroll/archive');
+    if (isArchiveRoute) {
+      const canExportPayroll = resolveEffectivePermission('can_export_payroll', userRole, perms, rolePermissions);
+      if (!canExportPayroll && !isSuperAdmin) {
+        const url = request.nextUrl.clone();
+        url.pathname = '/finance';
+        return NextResponse.redirect(url);
+      }
+    }
+
+    const canViewFinance = resolveEffectivePermission('can_view_finance', userRole, perms, rolePermissions);
+    const canExportPayrollPerm = resolveEffectivePermission('can_export_payroll', userRole, perms, rolePermissions);
+    const canLockCyclesPerm = resolveEffectivePermission('can_lock_cycles', userRole, perms, rolePermissions);
+
     if (
       userRole === 'ACCOUNTANT' ||
       isSuperAdmin ||
-      perms.can_view_finance === true ||
-      perms.can_export_payroll === true ||
-      perms.can_lock_cycles === true
+      canViewFinance ||
+      canExportPayrollPerm ||
+      canLockCyclesPerm
     ) {
       allowed = true;
     } else {
@@ -322,7 +364,7 @@ export async function middleware(request: NextRequest) {
   
   // 2. Teacher Route (/teacher, /teacher/*)
   else if (isTeacherRoute) {
-    if (userRole === 'TEACHER' || isSuperAdmin) {
+    if (userRole === 'TEACHER' || userRole === 'DEAN' || userRole === 'VICE_DEAN' || isSuperAdmin) {
       allowed = true;
     } else {
       allowed = false;
@@ -374,67 +416,84 @@ export async function middleware(request: NextRequest) {
       }
       // Super Admin has unrestricted access to all admin routes
       allowed = true;
-    } else if (isAdminDashboardPath || isRolesPath || isSettingsPath) {
-      // Strictly reserved for SUPER_ADMIN
-      allowed = false;
-      redirectUrl = getDefaultPortal(userRole);
-      deniedReason = 'super_admin_required';
-    } else if (isRatesPath) {
-      if (perms.can_manage_rates === true) {
-        allowed = true;
-      } else {
-        allowed = false;
-        redirectUrl = getDefaultPortal(userRole);
-        deniedReason = 'permission_required';
-      }
-    } else if (isStructurePath) {
-      if (userRole === 'HOD' || perms.can_manage_structure === true) {
-        allowed = true;
-      } else {
-        allowed = false;
-        redirectUrl = getDefaultPortal(userRole);
-        deniedReason = 'permission_required';
-      }
-    } else if (isAuditPath) {
-      if (perms.can_audit_logs === true || perms.can_view_audit === true) {
-        allowed = true;
-      } else {
-        allowed = false;
-        redirectUrl = getDefaultPortal(userRole);
-        deniedReason = 'permission_required';
-      }
-    } else if (isImportPath) {
-      if (perms.can_batch_import === true || perms.can_import_data === true) {
-        allowed = true;
-      } else {
-        allowed = false;
-        redirectUrl = getDefaultPortal(userRole);
-        deniedReason = 'permission_required';
-      }
-    } else if (isReportsPath) {
-      if (perms.can_export_payroll === true || perms.can_view_reports === true) {
-        allowed = true;
-      } else {
-        allowed = false;
-        redirectUrl = getDefaultPortal(userRole);
-        deniedReason = 'permission_required';
-      }
-    } else if (isDepartmentsPath) {
-      if (perms.can_view_all_departments === true) {
-        allowed = true;
-      } else {
-        allowed = false;
-        redirectUrl = getDefaultPortal(userRole);
-        deniedReason = 'permission_required';
-      }
     } else {
-      // Any other nested /admin sub-route: allow users with custom permissions
-      if (Object.values(perms).some(Boolean)) {
-        allowed = true;
+      // For IT_ADMIN and all other roles, evaluate granular effective permissions
+      const canManageRoles = resolveEffectivePermission('can_manage_roles', userRole, perms, rolePermissions);
+      const canManageSettings = resolveEffectivePermission('can_manage_settings', userRole, perms, rolePermissions);
+      const canManageRates = resolveEffectivePermission('can_manage_rates', userRole, perms, rolePermissions);
+      const canManageStructure = resolveEffectivePermission('can_manage_structure', userRole, perms, rolePermissions);
+      const canAuditLogs = resolveEffectivePermission('can_audit_logs', userRole, perms, rolePermissions);
+      const canBatchImport = resolveEffectivePermission('can_batch_import', userRole, perms, rolePermissions);
+      const canExportPayroll = resolveEffectivePermission('can_export_payroll', userRole, perms, rolePermissions);
+      const canViewDepartments = resolveEffectivePermission('can_view_all_departments', userRole, perms, rolePermissions);
+
+      if (isAdminDashboardPath) {
+        const url = request.nextUrl.clone();
+        if (canManageRoles) url.pathname = '/admin/roles';
+        else if (canManageStructure) url.pathname = '/admin/structure';
+        else if (canManageRates) url.pathname = '/admin/rates';
+        else if (canAuditLogs) url.pathname = '/admin/audit';
+        else if (canManageSettings) url.pathname = '/admin/settings';
+        else if (canBatchImport) url.pathname = '/admin/import';
+        else if (canExportPayroll) url.pathname = '/admin/reports';
+        else url.pathname = getDefaultPortal(userRole);
+        return NextResponse.redirect(url);
+      }
+
+      if (isRolesPath) {
+        allowed = canManageRoles;
+        if (!allowed) {
+          redirectUrl = userRole === 'IT_ADMIN' ? '/admin/structure' : getDefaultPortal(userRole);
+          deniedReason = 'permission_required';
+        }
+      } else if (isSettingsPath) {
+        allowed = canManageSettings;
+        if (!allowed) {
+          redirectUrl = userRole === 'IT_ADMIN' ? '/admin/structure' : getDefaultPortal(userRole);
+          deniedReason = 'permission_required';
+        }
+      } else if (isRatesPath) {
+        allowed = canManageRates;
+        if (!allowed) {
+          redirectUrl = userRole === 'IT_ADMIN' ? '/admin/structure' : getDefaultPortal(userRole);
+          deniedReason = 'permission_required';
+        }
+      } else if (isStructurePath) {
+        allowed = canManageStructure;
+        if (!allowed) {
+          redirectUrl = getDefaultPortal(userRole);
+          deniedReason = 'permission_required';
+        }
+      } else if (isAuditPath) {
+        allowed = canAuditLogs;
+        if (!allowed) {
+          redirectUrl = userRole === 'IT_ADMIN' ? '/admin/structure' : getDefaultPortal(userRole);
+          deniedReason = 'permission_required';
+        }
+      } else if (isImportPath) {
+        allowed = canBatchImport;
+        if (!allowed) {
+          redirectUrl = userRole === 'IT_ADMIN' ? '/admin/structure' : getDefaultPortal(userRole);
+          deniedReason = 'permission_required';
+        }
+      } else if (isReportsPath) {
+        allowed = canExportPayroll;
+        if (!allowed) {
+          redirectUrl = userRole === 'IT_ADMIN' ? '/admin/structure' : getDefaultPortal(userRole);
+          deniedReason = 'permission_required';
+        }
+      } else if (isDepartmentsPath) {
+        allowed = canViewDepartments;
+        if (!allowed) {
+          redirectUrl = userRole === 'IT_ADMIN' ? '/admin/structure' : getDefaultPortal(userRole);
+          deniedReason = 'permission_required';
+        }
       } else {
-        allowed = false;
-        redirectUrl = getDefaultPortal(userRole);
-        deniedReason = 'super_admin_required';
+        allowed = Object.values(perms).some(Boolean);
+        if (!allowed) {
+          redirectUrl = getDefaultPortal(userRole);
+          deniedReason = 'permission_required';
+        }
       }
     }
   } else {

@@ -81,13 +81,7 @@ export default function AdminRatesPage() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const forcedRole = params.get('role');
-      if (
-        forcedRole === 'COORDINATOR' ||
-        forcedRole === 'SUPER_ADMIN' ||
-        forcedRole === 'HOD' ||
-        forcedRole === 'TEACHER' ||
-        forcedRole === 'ACCOUNTANT'
-      ) {
+      if (['SUPER_ADMIN', 'IT_ADMIN', 'COORDINATOR', 'HOD', 'DEAN', 'VICE_DEAN', 'TEACHER', 'ACCOUNTANT'].includes(forcedRole || '')) {
         setActiveRole(forcedRole as UserRole);
         return;
       }
@@ -286,6 +280,7 @@ export default function AdminRatesPage() {
   const isAuthorized =
     activeRole === 'SUPER_ADMIN' ||
     session.isSuperAdmin ||
+    session.hasPermission?.('can_manage_rates') ||
     session.user?.custom_permissions?.['can_manage_rates'] === true;
 
   if (!isAuthorized) {

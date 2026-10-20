@@ -11,6 +11,8 @@ export interface TimesheetBreakdownEntry {
   notes?: string;
   createdAt?: string;
   approvedAt?: string | null;
+  submittedByName?: string;
+  approvedByName?: string;
 }
 
 export interface PayrollFacultyRow {
@@ -28,6 +30,8 @@ export interface PayrollFacultyRow {
   calculatedGross: number; // e.g. 1282.50
   requestedAt?: string | null;
   approvedAt?: string | null;
+  submittedByName?: string;
+  approvedByName?: string;
   status: PayrollStatus;
   departmentName?: string;
   academicRank?: string;

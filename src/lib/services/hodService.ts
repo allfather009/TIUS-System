@@ -42,6 +42,82 @@ export async function getDepartmentTeachers(
 }
 
 /**
+ * Helper function to fetch all teachers affiliated with an HoD's assigned department(s).
+ * Supports HoDs assigned to 1 or 2 departments (via managed_department_ids, department_heads, or primary department_id).
+ */
+export async function getTeachersForHodDepartments(
+  hodOrDepartments: UniversityUser | string | string[]
+): Promise<UniversityUser[]> {
+  try {
+    const supabase = createClient();
+    let departmentIds: string[] = [];
+
+    if (Array.isArray(hodOrDepartments)) {
+      departmentIds = hodOrDepartments.filter(Boolean);
+    } else if (typeof hodOrDepartments === 'object' && hodOrDepartments !== null) {
+      // 1. Check managed_department_ids (array of up to 2 departments)
+      if (hodOrDepartments.managed_department_ids && Array.isArray(hodOrDepartments.managed_department_ids) && hodOrDepartments.managed_department_ids.length > 0) {
+        departmentIds.push(...hodOrDepartments.managed_department_ids.filter(Boolean));
+      }
+      // 2. Check department_ids (legacy array)
+      if (departmentIds.length === 0 && hodOrDepartments.department_ids && Array.isArray(hodOrDepartments.department_ids)) {
+        departmentIds.push(...hodOrDepartments.department_ids.filter(Boolean));
+      }
+      // 3. Check primary department_id
+      if (departmentIds.length === 0 && hodOrDepartments.department_id) {
+        departmentIds.push(hodOrDepartments.department_id);
+      }
+      // 4. Check relational department_heads table if still empty
+      if (departmentIds.length === 0 && hodOrDepartments.id) {
+        const { data: deptHeads } = await supabase
+          .from('department_heads')
+          .select('department_id')
+          .eq('user_id', hodOrDepartments.id);
+        if (deptHeads && deptHeads.length > 0) {
+          departmentIds.push(...deptHeads.map((dh: { department_id: string }) => dh.department_id).filter(Boolean));
+        }
+      }
+    } else if (typeof hodOrDepartments === 'string') {
+      const val = hodOrDepartments.trim();
+      if (val) {
+        // Check department_heads table
+        const { data: deptHeads } = await supabase
+          .from('department_heads')
+          .select('department_id')
+          .eq('user_id', val);
+        if (deptHeads && deptHeads.length > 0) {
+          departmentIds.push(...deptHeads.map((dh: { department_id: string }) => dh.department_id).filter(Boolean));
+        } else {
+          // Check if user has managed_department_ids or department_id in users
+          const { data: userRow } = await supabase
+            .from('users')
+            .select('department_id, managed_department_ids, department_ids')
+            .eq('id', val)
+            .maybeSingle();
+
+          if (userRow?.managed_department_ids && Array.isArray(userRow.managed_department_ids) && userRow.managed_department_ids.length > 0) {
+            departmentIds.push(...userRow.managed_department_ids.filter(Boolean));
+          } else if (userRow?.department_id) {
+            departmentIds.push(userRow.department_id);
+          } else {
+            // Assume val is department_id
+            departmentIds.push(val);
+          }
+        }
+      }
+    }
+
+    const uniqueDeptIds = Array.from(new Set(departmentIds.filter(Boolean)));
+    if (uniqueDeptIds.length === 0) return [];
+
+    return await getDepartmentTeachers(uniqueDeptIds);
+  } catch (err) {
+    console.error('[HOD Service] Exception in getTeachersForHodDepartments:', err);
+    return [];
+  }
+}
+
+/**
  * Fetch timesheets strictly for teachers in the given department(s).
  * Filters for timesheets where the Teacher's department_id matches the logged-in HOD's department_id(s).
  */
@@ -57,10 +133,10 @@ export async function getDepartmentTimesheets(
     const supabase = createClient();
     console.log('[HOD Service] Fetching department timesheets for department_ids:', ids);
 
-    // Disambiguate foreign key via !timesheets_teacher_id_fkey and filter by department/department_id/teacher_id
+    // Disambiguate foreign key via !timesheets_teacher_id_fkey and fetch submitter details
     let query = supabase
       .from('timesheets')
-      .select('*, teacher:users!timesheets_teacher_id_fkey(*, department:departments(*))')
+      .select('*, teacher:users!timesheets_teacher_id_fkey(*, department:departments(*)), submitted_by:users!timesheets_submitted_by_id_fkey(id, name, email)')
       .order('date', { ascending: false });
 
     // Resolve teacher IDs for the given departments
@@ -123,8 +199,8 @@ export async function getPendingTeacherRequests(
 
     let query = supabase
       .from('timesheets')
-      .select('*, teacher:users!timesheets_teacher_id_fkey(*, department:departments(*))')
-      .eq('status', 'PENDING_HOD_APPROVAL')
+      .select('*, teacher:users!timesheets_teacher_id_fkey(*, department:departments(*)), submitted_by:users!timesheets_submitted_by_id_fkey(id, name, email)')
+      .in('status', ['PENDING', 'PENDING_HOD_APPROVAL'])
       .order('date', { ascending: false });
 
     const fetchedTeachers = await getDepartmentTeachers(ids);
@@ -167,7 +243,8 @@ export async function getPendingTeacherRequests(
 }
 
 /**
- * Insert a new Extra Hours timesheet record with status PENDING and hod_id set
+ * Insert a new Extra Hours request / timesheet record with status PENDING and submitted_by_id set.
+ * HoDs create requests on behalf of teachers or themselves.
  */
 export async function createTimesheet(data: {
   teacher_id: string;
@@ -176,9 +253,11 @@ export async function createTimesheet(data: {
   course_code?: string;
   session_type?: string;
   notes?: string;
-  hod_id: string;
+  hod_id?: string;
+  submitted_by_id?: string;
   department?: string;
-}): Promise<{ success: boolean; timesheet?: Timesheet; error?: string }> {
+  department_id?: string;
+}): Promise<{ success: boolean; timesheet?: Timesheet; request?: Timesheet; error?: string }> {
   // Validate against cycle lock
   const lockCheck = await isDateInLockedPayrollCycle(data.date);
   if (lockCheck.isLocked) {
@@ -190,10 +269,12 @@ export async function createTimesheet(data: {
   try {
     const supabase = createClient();
     const courseActivity = data.notes || `${data.course_code || 'GEN'} - ${data.session_type || 'Instructional Extra Session'}`;
+    const submitterId = data.submitted_by_id || data.hod_id || data.teacher_id;
 
     const newRecord: Record<string, any> = {
       teacher_id: data.teacher_id,
-      hod_id: data.hod_id,
+      submitted_by_id: submitterId,
+      hod_id: submitterId,
       date: data.date,
       hours: Number(data.hours),
       status: 'PENDING' as const,
@@ -206,24 +287,36 @@ export async function createTimesheet(data: {
     if (data.department) {
       newRecord.department = data.department;
     }
+    if (data.department_id) {
+      newRecord.department_id = data.department_id;
+    }
 
     const { data: inserted, error } = await supabase
       .from('timesheets')
       .insert([newRecord])
-      .select('*, teacher:users!timesheets_teacher_id_fkey(*)')
+      .select('*, teacher:users!timesheets_teacher_id_fkey(*), submitted_by:users!timesheets_submitted_by_id_fkey(id, name, email)')
       .maybeSingle();
 
     if (error) {
-      console.error('[HOD Service] Insert timesheet failed:', error.message || error);
+      console.error('[HOD Service] Insert timesheet/request failed:', error.message || error);
       return { success: false, error: error.message };
     }
 
-    return { success: true, timesheet: inserted as Timesheet };
+    return {
+      success: true,
+      timesheet: inserted as Timesheet,
+      request: inserted as Timesheet,
+    };
   } catch (err) {
     console.error('[HOD Service] Exception during createTimesheet:', err);
-    return { success: false, error: err instanceof Error ? err.message : 'Failed to create timesheet' };
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to create request/timesheet' };
   }
 }
+
+/**
+ * Export createRequest alias matching Phase 1 spec
+ */
+export const createRequest = createTimesheet;
 
 /**
  * Update an existing timesheet record in Supabase

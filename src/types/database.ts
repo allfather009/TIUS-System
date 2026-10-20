@@ -1,6 +1,8 @@
-export type UserRole = 'SUPER_ADMIN' | 'COORDINATOR' | 'HOD' | 'TEACHER' | 'ACCOUNTANT';
+export type UserRole = 'SUPER_ADMIN' | 'IT_ADMIN' | 'COORDINATOR' | 'HOD' | 'DEAN' | 'VICE_DEAN' | 'TEACHER' | 'ACCOUNTANT';
 export type EmploymentType = 'FULL_TIME' | 'PART_TIME';
 export type TimesheetStatus = 'PENDING' | 'PENDING_HOD_APPROVAL' | 'APPROVED' | 'REJECTED' | 'PAID';
+
+export type RequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
 export interface AcademicRate {
   id: string;
@@ -49,7 +51,8 @@ export interface UniversityUser {
   email: string;
   name: string;
   role: UserRole;
-  department_id: string | null;
+  department_id: string | null; // Standard teachers have a single department_id
+  managed_department_ids?: string[]; // HoDs assigned to 1 or 2 departments
   department_ids?: string[];
   departments?: string[];
   employment_type: EmploymentType;
@@ -64,9 +67,44 @@ export interface UniversityUser {
   updated_at?: string;
 }
 
+export type User = UniversityUser;
+
+export interface Request {
+  id: string;
+  teacher_id: string;
+  user_id?: string;
+  submitted_by_id: string;
+  submitted_by?: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
+  hod_id?: string | null;
+  date: string;
+  hours: number;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  course_activity?: string | null;
+  course_code?: string | null;
+  session_type?: string | null;
+  notes?: string | null;
+  department?: string | null;
+  department_id?: string | null;
+  teacher?: UniversityUser | null;
+  created_at?: string;
+  approved_at?: string | null;
+  updated_at?: string;
+}
+
 export interface Timesheet {
   id: string;
   teacher_id: string;
+  user_id?: string;
+  submitted_by_id?: string | null;
+  submitted_by?: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
   hod_id?: string | null;
   date: string;
   hours: number;
@@ -115,6 +153,10 @@ export interface TeacherLog {
   loggedByAvatar?: string;
   submissionRef: string;
   status: 'APPROVED' | 'PENDING' | 'PENDING_HOD_APPROVAL' | 'REJECTED';
+  departmentName?: string;
+  submittedByName?: string;
+  sessionType?: string;
+  rejectionReason?: string;
 }
 
 export interface TeacherPortalData {
@@ -206,4 +248,5 @@ export interface SystemSettings {
   exchange_rate: number;
   finance_can_edit_exchange?: boolean;
   coordinator_can_view_currency?: boolean;
+  role_permissions?: Record<string, Record<string, boolean>>;
 }

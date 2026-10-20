@@ -195,6 +195,17 @@ export function CashSlipsModal({
                       </div>
                     </div>
 
+                    <div className="flex items-center justify-between text-[11px] bg-slate-50/80 p-1.5 px-3 rounded-lg border border-slate-100">
+                      <div>
+                        <span className="text-slate-400 font-medium">Submitted By: </span>
+                        <span className="font-semibold text-slate-700">{row.submittedByName || 'Head of Department'}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 font-medium">Approved By: </span>
+                        <span className="font-bold text-emerald-700">{row.approvedByName || 'Academic Coordinator'}</span>
+                      </div>
+                    </div>
+
                     {/* TOTAL PAYMENT AMOUNT: Conditional USD/IQD display */}
                     {currency === 'USD' ? (
                       <div className="mt-1.5 p-2.5 px-3.5 rounded-xl bg-amber-50/90 border border-amber-200">

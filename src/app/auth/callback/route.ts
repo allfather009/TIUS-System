@@ -86,6 +86,9 @@ export async function GET(request: NextRequest) {
       case 'SUPER_ADMIN':
         destination = '/admin/roles';
         break;
+      case 'IT_ADMIN':
+        destination = '/admin/structure';
+        break;
       case 'COORDINATOR':
         destination = '/coordinator';
         break;
@@ -95,6 +98,8 @@ export async function GET(request: NextRequest) {
       case 'ACCOUNTANT':
         destination = '/finance';
         break;
+      case 'DEAN':
+      case 'VICE_DEAN':
       case 'TEACHER':
         destination = '/teacher';
         break;

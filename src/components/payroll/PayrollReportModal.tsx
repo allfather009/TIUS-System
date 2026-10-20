@@ -207,7 +207,7 @@ export function PayrollReportModal({
                     <th className="py-2.5 px-3 text-center">Faculty Count</th>
                     <th className="py-2.5 px-3 text-right">Dept Hours</th>
                     <th className="py-2.5 px-4 text-right">Subtotal Amount ({currency})</th>
-                    <th className="py-2.5 px-4 text-center">HoD Audit Status</th>
+                    <th className="py-2.5 px-4 text-center">Approval &amp; Audit Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -231,7 +231,7 @@ export function PayrollReportModal({
                     <td className="py-3 px-4 text-right text-[#540225] text-sm">
                       {fmtRate(summary.totalPayrollUSD)}
                     </td>
-                    <td className="py-3 px-4 text-center text-emerald-700">All 8 Faculties Signed</td>
+                    <td className="py-3 px-4 text-center text-emerald-700">Coordinator Approved</td>
                   </tr>
                 </tbody>
               </table>

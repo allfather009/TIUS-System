@@ -58,8 +58,8 @@ export default async function RootLayout({
     }
   }
 
-  // Simulation is only allowed if real authenticated user is SUPER_ADMIN
-  if (simRoleCookie && (initialRealUser?.role === 'SUPER_ADMIN' || !initialRealUser)) {
+  // Simulation is strictly gated exclusively to real SUPER_ADMIN
+  if (simRoleCookie && initialRealUser?.role === 'SUPER_ADMIN') {
     if (simUserCookie) {
       try {
         const raw = simUserCookie;

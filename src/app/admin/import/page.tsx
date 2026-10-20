@@ -11,7 +11,7 @@ import * as XLSX from 'xlsx';
 import Link from 'next/link';
 
 export default function BatchImportPage() {
-  const { user, role, isSuperAdmin } = useSession();
+  const { user, role, isSuperAdmin, hasPermission } = useSession();
   const activeRole = role || 'TEACHER';
 
   const [dragActive, setDragActive] = useState(false);
@@ -215,7 +215,12 @@ export default function BatchImportPage() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const isAuthorized = isSuperAdmin || activeRole === 'SUPER_ADMIN' || user?.custom_permissions?.['can_batch_import'] === true || user?.custom_permissions?.['can_import_data'] === true;
+  const isAuthorized =
+    isSuperAdmin ||
+    activeRole === 'SUPER_ADMIN' ||
+    hasPermission?.('can_batch_import') ||
+    user?.custom_permissions?.['can_batch_import'] === true ||
+    user?.custom_permissions?.['can_import_data'] === true;
 
   if (role && !isAuthorized) {
     return (

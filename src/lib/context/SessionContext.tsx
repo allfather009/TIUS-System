@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { usePathname } from 'next/navigation';
 import { UserRole } from '@/types/database';
 import { createClient } from '@/lib/supabase/client';
+import { DEFAULT_ROLE_PERMISSIONS, resolveEffectivePermission } from '@/lib/services/systemSettingsService';
 
 export interface SessionUser {
   id: string;
@@ -32,6 +33,9 @@ interface SessionContextType {
   isSimulation: boolean;
   activeViewLabel: string;
   isSuperAdmin: boolean;
+  rolePermissions: Record<string, Record<string, boolean>>;
+  hasPermission: (key: string) => boolean;
+  refreshPermissions: () => Promise<void>;
   setRole: (newRole: UserRole, customPerms?: Record<string, boolean>) => void;
   simulateUser: (user: any) => Promise<void> | void;
   exitSimulation: () => void;
@@ -85,6 +89,39 @@ export const DEFAULT_USERS: Record<UserRole, SessionUser> = {
     staffId: 'TIU-0941',
     departmentName: 'University Finance & Treasury',
   },
+  IT_ADMIN: {
+    id: 'u3333333-3333-3333-3333-333333333333',
+    name: 'Sarkawt Ahmed',
+    email: 'sarkawt.ahmed@tiu.edu.iq',
+    role: 'IT_ADMIN',
+    roleTitle: 'IT Support Admin',
+    academic_title: 'IT Support Admin',
+    avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
+    staffId: 'TIU-IT-004',
+    departmentName: 'IT & Technical Services',
+  },
+  DEAN: {
+    id: 'u5555555-5555-5555-5555-555555555555',
+    name: 'Prof. Dr. Halmat Jaza',
+    email: 'halmat.jaza@tiu.edu.iq',
+    role: 'DEAN',
+    roleTitle: 'Dean',
+    academic_title: 'Professor & Dean',
+    avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80',
+    staffId: 'TIU-DEAN-001',
+    departmentName: 'Faculty of Engineering',
+  },
+  VICE_DEAN: {
+    id: 'u6666666-6666-6666-6666-666666666666',
+    name: 'Assoc. Prof. Dr. Dilshad Ameen',
+    email: 'dilshad.ameen@tiu.edu.iq',
+    role: 'VICE_DEAN',
+    roleTitle: 'Vice Dean',
+    academic_title: 'Associate Professor & Vice Dean',
+    avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&q=80',
+    staffId: 'TIU-VDEAN-002',
+    departmentName: 'Faculty of Engineering',
+  },
   TEACHER: {
     id: 'u8888888-8888-8888-8888-888888888888',
     name: 'Dr. Ali Rashid',
@@ -101,8 +138,11 @@ export const DEFAULT_USERS: Record<UserRole, SessionUser> = {
 
 const VIEW_LABELS: Record<UserRole, string> = {
   SUPER_ADMIN: 'Super Admin',
+  IT_ADMIN: 'IT Support Admin',
   COORDINATOR: 'Academic Coordinator',
   HOD: 'Head of Department',
+  DEAN: 'Dean',
+  VICE_DEAN: 'Vice Dean',
   ACCOUNTANT: 'Finance & Payroll',
   TEACHER: 'Teacher',
 };
@@ -166,6 +206,55 @@ export function SessionProvider({
     if (initialSession?.custom_permissions) return initialSession.custom_permissions;
     return {};
   });
+
+  const [rolePermissions, setRolePermissions] = useState<Record<string, Record<string, boolean>>>(DEFAULT_ROLE_PERMISSIONS);
+
+  const mergeWithDefaultRolePermissions = (incoming?: Record<string, Record<string, boolean>> | null) => {
+    const merged: Record<string, Record<string, boolean>> = {};
+    for (const [r, perms] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
+      merged[r] = { ...perms };
+    }
+    if (incoming && typeof incoming === 'object') {
+      for (const [r, perms] of Object.entries(incoming)) {
+        merged[r] = {
+          ...(merged[r] || (DEFAULT_ROLE_PERMISSIONS as any)[r] || {}),
+          ...(perms as Record<string, boolean>),
+        };
+      }
+    }
+    return merged;
+  };
+
+  useEffect(() => {
+    async function loadRolePerms() {
+      try {
+        const res = await fetch('/api/system-settings', { cache: 'no-store' });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.data?.role_permissions) {
+            setRolePermissions(mergeWithDefaultRolePermissions(json.data.role_permissions));
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load role permissions in session:', err);
+      }
+    }
+    loadRolePerms();
+  }, []);
+
+  const refreshPermissions = async () => {
+    try {
+      const res = await fetch('/api/system-settings', { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data?.role_permissions) {
+          setRolePermissions(mergeWithDefaultRolePermissions(json.data.role_permissions));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to refresh role permissions:', err);
+    }
+  };
 
   const [role, setRoleState] = useState<UserRole>(() => {
     if (initialRole && initialRole in DEFAULT_USERS) return initialRole;
@@ -435,6 +524,12 @@ export function SessionProvider({
    * 5. Sets isSimulating = true to render orange banner
    */
   const simulateUser = async (targetUser: any) => {
+    // Strictly gate this feature so it ONLY functions when the logged-in user's real base role is SUPER_ADMIN
+    if (realUser.role !== 'SUPER_ADMIN') {
+      console.warn('Simulation feature is exclusively restricted to Super Admin only.');
+      return;
+    }
+
     try {
       const supabase = createClient();
       let targetRecord = targetUser;
@@ -492,8 +587,9 @@ export function SessionProvider({
         // Navigate to simulated user's corresponding portal
         let dest = '/teacher';
         if (simData.role === 'SUPER_ADMIN') dest = '/admin/roles';
+        else if (simData.role === 'IT_ADMIN') dest = '/admin/structure';
         else if (simData.role === 'COORDINATOR') dest = '/coordinator';
-        else if (simData.role === 'TEACHER') dest = '/teacher';
+        else if (simData.role === 'TEACHER' || simData.role === 'DEAN' || simData.role === 'VICE_DEAN') dest = '/teacher';
         else if (simData.role === 'HOD') dest = '/hod';
         else if (simData.role === 'ACCOUNTANT') dest = '/finance';
 
@@ -585,7 +681,29 @@ export function SessionProvider({
   // Alias user to activeUser for backward compatibility across all existing components
   const user = activeUser;
   const activeViewLabel = VIEW_LABELS[role] || 'Super Admin';
-  const isSuperAdmin = !isSimulating && (realUser.role === 'SUPER_ADMIN' || role === 'SUPER_ADMIN');
+  const isSuperAdmin = !isSimulating && realUser.role === 'SUPER_ADMIN';
+
+  const hasPermission = (permissionKey: string): boolean => {
+    // 1. SUPER_ADMIN is always true for everything (including simulator)
+    if (!isSimulating && (realUser.role === 'SUPER_ADMIN' || user.role === 'SUPER_ADMIN')) {
+      return true;
+    }
+    // HARD RULE: The Portal/Role Simulator must NEVER be toggleable or accessible to IT_ADMIN or any other role
+    if (
+      permissionKey === 'can_simulate_roles' ||
+      permissionKey === 'simulator' ||
+      permissionKey === 'role_simulator'
+    ) {
+      return false;
+    }
+    const currentRole = user.role || role;
+    return resolveEffectivePermission(
+      permissionKey,
+      currentRole,
+      user.custom_permissions || customPermissions,
+      rolePermissions
+    );
+  };
 
   return (
     <SessionContext.Provider
@@ -599,13 +717,16 @@ export function SessionProvider({
         isSimulation: isSimulating,
         activeViewLabel,
         isSuperAdmin,
+        rolePermissions,
+        hasPermission,
+        refreshPermissions,
         setRole,
         simulateUser,
         exitSimulation,
         logout,
       }}
     >
-      {isSimulating && (
+      {isSimulating && realUser.role === 'SUPER_ADMIN' && (
         <div className="fixed top-0 left-0 right-0 h-10 bg-amber-500 text-white flex items-center justify-center font-semibold text-sm shadow-md z-[99999] px-4">
           <span className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
@@ -638,6 +759,10 @@ export function useSession(): SessionContextType {
       isSimulation: false,
       activeViewLabel: 'Super Admin',
       isSuperAdmin: true,
+      rolePermissions: DEFAULT_ROLE_PERMISSIONS,
+      hasPermission: (key: string) =>
+        key !== 'can_simulate_roles' && key !== 'simulator' && key !== 'role_simulator',
+      refreshPermissions: async () => {},
       setRole: () => {},
       simulateUser: () => {},
       exitSimulation: () => {},

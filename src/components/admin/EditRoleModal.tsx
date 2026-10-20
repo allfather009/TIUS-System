@@ -32,7 +32,8 @@ interface EditRoleModalProps {
     academicTitle?: string | null,
     hourlyRate?: number | null,
     departmentIds?: string[] | null,
-    departmentNames?: string[] | null
+    departmentNames?: string[] | null,
+    managedDepartmentIds?: string[] | null
   ) => Promise<void>;
 }
 
@@ -46,6 +47,7 @@ export function EditRoleModal({
 }: EditRoleModalProps) {
   const [selectedRole, setSelectedRole] = useState<UserRole>('TEACHER');
   const [selectedDeptIds, setSelectedDeptIds] = useState<string[]>([]);
+  const [deptLimitWarning, setDeptLimitWarning] = useState<string | null>(null);
   const [academicTitle, setAcademicTitle] = useState<string>('Lecturer');
   const [rates, setRates] = useState<AcademicRate[]>([]);
   const [saving, setSaving] = useState(false);
@@ -96,9 +98,12 @@ export function EditRoleModal({
   if (user && user.id !== prevUserId) {
     setPrevUserId(user.id);
     setSelectedRole(user.role);
+    setDeptLimitWarning(null);
     const initialDeptIds =
-      user.department_ids && user.department_ids.length > 0
-        ? user.department_ids
+      user.role === 'HOD' && user.managed_department_ids && user.managed_department_ids.length > 0
+        ? user.managed_department_ids.slice(0, 2)
+        : user.department_ids && user.department_ids.length > 0
+        ? user.department_ids.slice(0, user.role === 'HOD' ? 2 : 1)
         : user.department_id
         ? [user.department_id]
         : departments[0]?.id
@@ -109,7 +114,38 @@ export function EditRoleModal({
     setImageError(false);
   }
 
-  // Filter & group departments for multi-select
+  const handleRoleChange = (newRole: UserRole) => {
+    setSelectedRole(newRole);
+    setDeptLimitWarning(null);
+    if (['TEACHER', 'DEAN', 'VICE_DEAN'].includes(newRole)) {
+      // Enforce strictly 1 department for faculty roles
+      if (selectedDeptIds.length > 1) {
+        setSelectedDeptIds(selectedDeptIds.slice(0, 1));
+      }
+    } else if (newRole === 'HOD') {
+      // Enforce max 2 departments for HoD
+      if (selectedDeptIds.length > 2) {
+        setSelectedDeptIds(selectedDeptIds.slice(0, 2));
+      }
+    }
+  };
+
+  const handleHodDeptsChange = (newIds: string[]) => {
+    if (newIds.length > 2) {
+      setDeptLimitWarning('Heads of Department can manage a maximum of 2 departments.');
+      setSelectedDeptIds(newIds.slice(0, 2));
+    } else {
+      setDeptLimitWarning(null);
+      setSelectedDeptIds(newIds);
+    }
+  };
+
+  const handleSingleDeptChange = (deptId: string) => {
+    setSelectedDeptIds(deptId ? [deptId] : []);
+    setDeptLimitWarning(null);
+  };
+
+  // Filter & group departments for multi-select and single select
   const departmentGroups: CustomSelectGroup[] = useMemo(() => {
     const groupsMap: Record<string, CustomSelectOption[]> = {};
     departments.forEach((d) => {
@@ -128,10 +164,13 @@ export function EditRoleModal({
   }, [departments]);
 
   const roleOptions: CustomSelectOption[] = [
-    { value: 'TEACHER', label: 'Teacher (Lecturer / Lab)', description: 'Self-Service Overtime Logging' },
-    { value: 'HOD', label: 'Head of Department (HoD)', description: 'Departmental Approval Lead' },
-    { value: 'COORDINATOR', label: 'Academic Coordinator', description: 'Cross-Faculty Audits & Quotas' },
-    { value: 'ACCOUNTANT', label: 'Payroll & Finance Officer', description: 'Cash Disbursal & Auditing' },
+    { value: 'TEACHER', label: 'Teacher (Lecturer / Lab)', description: 'View Assigned Hours & Payout Status (Read-Only)' },
+    { value: 'DEAN', label: 'Dean', description: 'Faculty Level Leadership (Single Department)' },
+    { value: 'VICE_DEAN', label: 'Vice Dean', description: 'Faculty Level Vice Leadership (Single Department)' },
+    { value: 'HOD', label: 'Head of Department (HoD)', description: 'Submit Hours for Department Faculty (1 or 2 Depts)' },
+    { value: 'COORDINATOR', label: 'Academic Coordinator', description: 'Central Approval Authority (Accept/Reject)' },
+    { value: 'IT_ADMIN', label: 'IT Support Admin', description: 'Sub-Admin & Technical Support' },
+    { value: 'ACCOUNTANT', label: 'Payroll & Finance Officer', description: 'Coordinator-Approved Payouts & Cash Slips' },
   ];
 
   const academicTitleOptions: CustomSelectOption[] = useMemo(() => {
@@ -154,6 +193,7 @@ export function EditRoleModal({
       selectedDeptIds.some(
         (deptId) =>
           u.department_id === deptId ||
+          (u.managed_department_ids && u.managed_department_ids.includes(deptId)) ||
           (u.department_ids && u.department_ids.includes(deptId))
       )
   );
@@ -165,24 +205,29 @@ export function EditRoleModal({
     }
     setSaving(true);
     try {
+      const isHodRole = selectedRole === 'HOD';
+      const isTeacherFlow = ['TEACHER', 'DEAN', 'VICE_DEAN'].includes(selectedRole);
       const calculatedRate =
-        selectedRole === 'TEACHER'
+        isTeacherFlow
           ? getRateForTitle(academicTitle, rates)
           : undefined;
 
       const primaryDeptId = selectedDeptIds[0] || null;
-      const deptNames = selectedDeptIds.map(
+      const finalManagedIds = isHodRole ? selectedDeptIds.slice(0, 2) : [];
+      const finalDeptIds = isHodRole ? finalManagedIds : (primaryDeptId ? [primaryDeptId] : []);
+      const deptNames = finalDeptIds.map(
         (id) => departments.find((d) => d.id === id)?.name || id
       );
 
       await onSave(
         user.id,
         selectedRole,
-        ['TEACHER', 'HOD'].includes(selectedRole) ? primaryDeptId : null,
-        selectedRole === 'TEACHER' ? academicTitle : user.academic_title,
+        ['TEACHER', 'HOD', 'DEAN', 'VICE_DEAN'].includes(selectedRole) ? primaryDeptId : null,
+        isTeacherFlow ? academicTitle : user.academic_title,
         calculatedRate,
-        ['TEACHER', 'HOD'].includes(selectedRole) ? selectedDeptIds : null,
-        ['TEACHER', 'HOD'].includes(selectedRole) ? deptNames : null
+        ['TEACHER', 'HOD', 'DEAN', 'VICE_DEAN'].includes(selectedRole) ? finalDeptIds : null,
+        ['TEACHER', 'HOD', 'DEAN', 'VICE_DEAN'].includes(selectedRole) ? deptNames : null,
+        finalManagedIds
       );
       onClose();
     } catch (err) {
@@ -254,7 +299,7 @@ export function EditRoleModal({
             <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
               Select New System Role <span className="text-red-500">*</span>
             </label>
-            <Select value={selectedRole} onValueChange={(val) => setSelectedRole(val as UserRole)}>
+            <Select value={selectedRole} onValueChange={(val) => handleRoleChange(val as UserRole)}>
               <SelectTrigger className="w-full min-h-[44px] h-11 px-3.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-800 hover:border-slate-300 hover:bg-white focus:ring-2 focus:ring-[#721c3b]/30 focus:border-[#721c3b] focus:bg-white transition-all shadow-xs cursor-pointer">
                 <SelectValue placeholder="Select a role...">
                   {roleOptions.find((r) => r.value === selectedRole)?.label || selectedRole}
@@ -286,17 +331,23 @@ export function EditRoleModal({
             </Select>
             <p className="text-[11px] text-slate-500">
               {selectedRole === 'HOD'
-                ? 'Assigning HoD grants approval rights for submitted lecture, lab, and exam supervisory hours.'
+                ? 'Head of Department: Primary submitter of extra hours for faculty in their managed department(s) (1 or 2 departments).'
                 : selectedRole === 'COORDINATOR'
-                ? 'Coordinators have university-wide oversight and configure cross-faculty teaching quotas.'
+                ? 'Academic Coordinator: Central university approval authority to accept or reject extra hours requests.'
                 : selectedRole === 'ACCOUNTANT'
-                ? 'Accountants verify timesheets and execute central cash payouts.'
-                : 'Teachers can submit weekly overtime claims, makeup logs, and view approval status.'}
+                ? 'Payroll & Finance Officer: Views coordinator-approved requests, generates cash slips, and settles payments.'
+                : selectedRole === 'IT_ADMIN'
+                ? 'IT Support Admin: Technical support, structure management, and rates administration.'
+                : selectedRole === 'DEAN'
+                ? 'Dean: Executive faculty leader affiliated with a single department (Teacher portal flow).'
+                : selectedRole === 'VICE_DEAN'
+                ? 'Vice Dean: Deputy faculty administrator affiliated with a single department (Teacher portal flow).'
+                : 'Teacher: Lecturer / lab faculty affiliated with a single department (Read-only personal dashboard).'}
             </p>
           </div>
 
-          {/* Mandatory Academic Title Dropdown for TEACHER */}
-          {selectedRole === 'TEACHER' && (
+          {/* Mandatory Academic Title Dropdown for Faculty Roles (TEACHER, DEAN, VICE_DEAN) */}
+          {['TEACHER', 'DEAN', 'VICE_DEAN'].includes(selectedRole) && (
             <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-300 space-y-2.5">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
@@ -321,65 +372,55 @@ export function EditRoleModal({
             </div>
           )}
 
-          {/* Department Affiliation / Multi-Department Jurisdiction (Available for TEACHER and HOD) */}
-          {['TEACHER', 'HOD'].includes(selectedRole) && (
-            <div
-              className={`p-4 rounded-2xl border space-y-3 transition-all ${
-                selectedRole === 'HOD'
-                  ? 'bg-amber-50/80 border-amber-300'
-                  : 'bg-slate-50 border-slate-200'
-              }`}
-            >
+          {/* Dynamic Department Assignment */}
+          {/* HOD: Multi-Department Selector (Max 2 departments) */}
+          {selectedRole === 'HOD' && (
+            <div className="p-4 rounded-2xl border border-amber-300 bg-amber-50/80 space-y-3 transition-all">
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Building2
-                      className={`w-4 h-4 ${
-                        selectedRole === 'HOD' ? 'text-[#7c5800]' : 'text-slate-600'
-                      }`}
-                    />
-                    <label
-                      className={`text-xs font-bold ${
-                        selectedRole === 'HOD' ? 'text-[#271900]' : 'text-slate-800'
-                      }`}
-                    >
-                      Linked Department Affiliation {selectedRole === 'HOD' && <span className="text-red-500">*</span>}
+                    <Building2 className="w-4 h-4 text-[#7c5800]" />
+                    <label className="text-xs font-bold text-[#271900]">
+                      Managed Departments (Max 2) <span className="text-red-500">*</span>
                     </label>
                   </div>
-                  {selectedDeptIds.length > 0 && (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-200/80 text-amber-900 border border-amber-300">
-                      {selectedDeptIds.length} {selectedDeptIds.length === 1 ? 'Department' : 'Departments'}
-                    </span>
-                  )}
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    selectedDeptIds.length === 2
+                      ? 'bg-amber-300 text-amber-950 border-amber-400'
+                      : 'bg-amber-200/80 text-amber-900 border-amber-300'
+                  }`}>
+                    {selectedDeptIds.length}/2 Departments Selected
+                  </span>
                 </div>
-                <p
-                  className={`text-[11px] leading-snug ${
-                    selectedRole === 'HOD' ? 'text-amber-900 font-medium' : 'text-slate-500'
-                  }`}
-                >
-                  {selectedRole === 'HOD'
-                    ? 'An acting HoD can be affiliated with multiple departments simultaneously to govern faculty hours, audit logs, and approve timesheets across all assigned units.'
-                    : 'Assign academic department jurisdictions for timesheet tracking and departmental rollup.'}
+                <p className="text-[11px] leading-snug text-amber-900 font-medium">
+                  Under university policy, an HoD can manage 1 or 2 departments. The primary department is set to the first selection for backward compatibility.
                 </p>
               </div>
 
-              {/* Multi-Select Component with Removable Tags/Pills */}
+              {/* Multi-Select Component enforcing max 2 */}
               <CustomMultiSelect
                 values={selectedDeptIds}
-                onChange={setSelectedDeptIds}
+                onChange={handleHodDeptsChange}
                 options={departmentGroups}
-                variant={selectedRole === 'HOD' ? 'amber' : 'default'}
-                placeholder="Select one or more departments..."
+                variant="amber"
+                placeholder="Select 1 or 2 departments..."
                 searchPlaceholder="Filter departments..."
               />
 
-              {selectedRole === 'HOD' && selectedDeptIds.length === 0 && (
+              {deptLimitWarning && (
+                <div className="flex items-center gap-2 text-[11px] text-amber-900 bg-amber-100/90 px-3 py-1.5 rounded-xl border border-amber-300 font-semibold animate-in fade-in">
+                  <ShieldAlert className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                  <span>{deptLimitWarning}</span>
+                </div>
+              )}
+
+              {selectedDeptIds.length === 0 && (
                 <p className="text-[11px] text-red-600 font-semibold">
-                  * At least one department affiliation must be selected for an HoD.
+                  * At least one department must be assigned to an HoD.
                 </p>
               )}
 
-              {selectedRole === 'HOD' && existingHodsInSelectedDepts.length > 0 && (
+              {existingHodsInSelectedDepts.length > 0 && (
                 <div className="flex items-start gap-2 text-[11px] text-amber-900 bg-white/90 p-2.5 rounded-xl border border-amber-200">
                   <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <div>
@@ -387,10 +428,47 @@ export function EditRoleModal({
                     <strong className="font-semibold text-slate-900">
                       {existingHodsInSelectedDepts.map((u) => u.name).join(', ')}
                     </strong>.
-                    Assigning <strong className="font-semibold text-slate-900">{user.name}</strong> will
-                    configure acting / multi-department HoD sign-off capability across these units.
+                    Assigning <strong className="font-semibold text-slate-900">{user.name}</strong> will configure shared or acting HoD sign-off capability for these units.
                   </div>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* TEACHER, DEAN, VICE_DEAN: Single Department Dropdown */}
+          {['TEACHER', 'DEAN', 'VICE_DEAN'].includes(selectedRole) && (
+            <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 space-y-3 transition-all">
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-slate-600" />
+                    <label className="text-xs font-bold text-slate-800">
+                      Affiliated Department <span className="text-red-500">*</span>
+                    </label>
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                    Single Department
+                  </span>
+                </div>
+                <p className="text-[11px] leading-snug text-slate-500">
+                  Faculty members (Teachers, Deans, and Vice Deans) are affiliated with strictly one primary department.
+                </p>
+              </div>
+
+              {/* Single Department Dropdown */}
+              <CustomSelect
+                value={selectedDeptIds[0] || ''}
+                onChange={handleSingleDeptChange}
+                options={departmentGroups}
+                placeholder="Select affiliated department..."
+                searchPlaceholder="Filter departments..."
+                placement="bottom"
+              />
+
+              {selectedDeptIds.length === 0 && (
+                <p className="text-[11px] text-red-600 font-semibold">
+                  * Please assign an affiliated department for this faculty member.
+                </p>
               )}
             </div>
           )}

@@ -51,7 +51,7 @@ export function TeacherActivityDistribution({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
             {data.courseBreakdown.length === 0 ? (
               <div className="col-span-full py-6 text-center text-xs text-slate-400">
-                No course hours logged yet this cycle. Log extra hours using the button above to view deliverable distribution.
+                No course hours recorded for this cycle yet. Hours submitted on your behalf by your Head of Department will appear here.
               </div>
             ) : (
               data.courseBreakdown.map((item, idx) => (

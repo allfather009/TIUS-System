@@ -8,15 +8,13 @@ interface TeacherHeroProps {
   departmentFaculty?: string;
   semester?: string;
   selectedMonth?: string;
-  onRequestHours?: () => void;
 }
 
 export function TeacherHero({
   teacherName = 'Faculty Member',
   departmentFaculty = 'Department of Academic Studies',
-  semester = 'Academic Year 2024–2025',
-  selectedMonth = 'October 2024',
-  onRequestHours,
+  semester = 'Academic Year 2026–2027',
+  selectedMonth = 'Active Cycle',
 }: TeacherHeroProps) {
   return (
     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pt-2">
@@ -36,23 +34,12 @@ export function TeacherHero({
         </div>
       </div>
 
-      {/* Right: Month Selector & Request Button */}
+      {/* Right: Active Cycle Display */}
       <div className="flex items-center gap-3 flex-wrap">
-        {/* Current Active Cycle Display */}
         <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold shadow-2xs">
           <Calendar className="w-4 h-4 text-slate-500" />
           <span>{selectedMonth}</span>
         </div>
-
-        {/* Request Extra Hours Button */}
-        <button
-          type="button"
-          onClick={onRequestHours}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#540225] hover:bg-[#721c3b] text-white text-xs font-bold transition-all shadow-md hover:shadow-lg active:scale-[0.98] cursor-pointer"
-        >
-          <span className="text-base leading-none">+</span>
-          <span>Request Extra Hours</span>
-        </button>
       </div>
     </div>
   );

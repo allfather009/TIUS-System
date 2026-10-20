@@ -11,8 +11,6 @@ import {
   LayoutGrid,
   BarChart3,
   SlidersHorizontal,
-  HelpCircle,
-  Radio,
   LogOut,
   Users,
   Archive,
@@ -29,7 +27,7 @@ import { checkCanViewCurrency, checkCanManageCycles } from '@/lib/services/syste
 import { createClient } from '@/lib/supabase/client';
 
 interface SidebarProps {
-  activeItem?: 'teacher' | 'hod' | 'hod-requests' | 'coordinator' | 'superadmin' | 'payroll' | 'departments' | 'reports' | 'settings' | 'rates' | 'structure' | 'audit-logs' | 'import' | '';
+  activeItem?: 'teacher' | 'hod' | 'hod-requests' | 'coordinator' | 'superadmin' | 'roles' | 'payroll' | 'departments' | 'reports' | 'settings' | 'rates' | 'structure' | 'audit-logs' | 'import' | '';
   activeRole?: string;
   pendingRequestsCount?: number;
   onExportCSV?: () => void;
@@ -77,9 +75,43 @@ export function Sidebar({
     if (pathname.startsWith('/admin/departments')) return 'departments';
     if (pathname.startsWith('/admin/reports')) return 'reports';
     if (pathname.startsWith('/admin/settings')) return 'settings';
+    if (pathname.startsWith('/admin/audit')) return 'audit-logs';
+    if (pathname.startsWith('/admin/import')) return 'import';
     return activeItem || '';
   };
   const singleActiveKey = getSingleActiveKey();
+
+  const user = session.user;
+  const isSuperAdmin =
+    !session.isSimulating &&
+    !user?.isSimulation &&
+    (currentRole === 'SUPER_ADMIN' ||
+      session.isSuperAdmin ||
+      user?.role === 'SUPER_ADMIN');
+
+  const userPerms = (user?.custom_permissions || {}) as Record<string, boolean>;
+
+  // Dynamic permission checks using central effective permission resolution
+  const canManageRoles = session.hasPermission?.('can_manage_roles') ?? false;
+  const canManageRates = session.hasPermission?.('can_manage_rates') ?? false;
+  const canExportPayroll = session.hasPermission?.('can_export_payroll') ?? false;
+  const canAuditLogs = session.hasPermission?.('can_audit_logs') ?? false;
+  const canManageStructure = session.hasPermission?.('can_manage_structure') ?? false;
+  const canManageSettings = session.hasPermission?.('can_manage_settings') ?? false;
+  const canBatchImport = session.hasPermission?.('can_batch_import') ?? false;
+  const canViewCurrency = session.hasPermission?.('can_view_currency_settings') ?? false;
+  const canManageCycles = session.hasPermission?.('can_lock_cycles') ?? false;
+  const canViewFinance = session.hasPermission?.('can_view_finance') ?? false;
+
+  let itAdminDest = '/admin/structure';
+  if (!canManageStructure) {
+    if (canManageRoles) itAdminDest = '/admin/roles';
+    else if (canManageRates) itAdminDest = '/admin/rates';
+    else if (canAuditLogs) itAdminDest = '/admin/audit';
+    else if (canManageSettings) itAdminDest = '/admin/settings';
+    else if (canBatchImport) itAdminDest = '/admin/import';
+    else if (canExportPayroll) itAdminDest = '/admin/reports';
+  }
 
   // Role-isolated main portals list
   let mainPortals: Array<{
@@ -101,14 +133,25 @@ export function Sidebar({
         active: singleActiveKey === 'payroll',
       },
     ];
-  } else if (currentRole === 'TEACHER') {
+  } else if (currentRole === 'TEACHER' || currentRole === 'DEAN' || currentRole === 'VICE_DEAN') {
     mainPortals = [
       {
         key: 'teacher',
-        label: 'Teacher Portal',
+        label: currentRole === 'DEAN' ? 'Dean Portal' : currentRole === 'VICE_DEAN' ? 'Vice Dean Portal' : 'Teacher Portal',
         href: '/teacher',
         icon: GraduationCap,
         active: singleActiveKey === 'teacher',
+      },
+    ];
+  } else if (currentRole === 'IT_ADMIN') {
+    mainPortals = [
+      {
+        key: 'it-admin',
+        label: 'IT Administration',
+        href: itAdminDest,
+        icon: ShieldAlert,
+        active: singleActiveKey === 'structure' || singleActiveKey === 'rates' || singleActiveKey === 'reports' || singleActiveKey === 'departments',
+        badge: 'IT',
       },
     ];
   } else if (currentRole === 'HOD') {
@@ -122,18 +165,22 @@ export function Sidebar({
       },
       {
         key: 'hod-requests',
-        label: 'Teacher Requests',
+        label: 'Submissions Outbox',
         href: '/hod/requests',
         icon: FileCheck2,
         active: singleActiveKey === 'hod-requests',
       },
-      {
-        key: 'structure',
-        label: 'Academic Structure',
-        href: '/admin/structure',
-        icon: LayoutGrid,
-        active: singleActiveKey === 'structure',
-      },
+      ...(canManageStructure
+        ? [
+            {
+              key: 'structure',
+              label: 'Academic Structure',
+              href: '/admin/structure',
+              icon: LayoutGrid,
+              active: singleActiveKey === 'structure',
+            },
+          ]
+        : []),
     ];
   } else if (currentRole === 'COORDINATOR') {
     mainPortals = [
@@ -175,7 +222,7 @@ export function Sidebar({
       },
       {
         key: 'hod-requests',
-        label: 'Teacher Requests',
+        label: 'Submissions Outbox',
         href: '/hod/requests',
         icon: FileCheck2,
         active: singleActiveKey === 'hod-requests',
@@ -198,7 +245,7 @@ export function Sidebar({
   }
 
   // Globally apply custom permission portal overrides
-  if (currentRole !== 'ACCOUNTANT' && (session.user?.custom_permissions?.can_view_finance || session.user?.custom_permissions?.can_export_payroll)) {
+  if (currentRole !== 'ACCOUNTANT' && (canViewFinance || canExportPayroll)) {
     // Ensure we don't duplicate if fallback already added it
     if (!mainPortals.some(p => p.key === 'payroll')) {
       mainPortals.push({
@@ -211,27 +258,18 @@ export function Sidebar({
     }
   }
 
-  const user = session.user;
-  const isSuperAdmin =
-    !session.isSimulating &&
-    !user?.isSimulation &&
-    (currentRole === 'SUPER_ADMIN' ||
-      session.isSuperAdmin ||
-      user?.role === 'SUPER_ADMIN');
-
-  const userPerms = (user?.custom_permissions || {}) as Record<string, boolean>;
-
-  // Dynamic permission checks evaluating the JSONB custom_permissions object
-  const canManageRates = isSuperAdmin || userPerms['can_manage_rates'] === true;
-  const canExportPayroll = isSuperAdmin || userPerms['can_export_payroll'] === true || userPerms['can_view_reports'] === true;
-  const canAuditLogs = isSuperAdmin || userPerms['can_audit_logs'] === true || userPerms['can_view_audit'] === true;
-  const canManageStructure = (isSuperAdmin || userPerms['can_manage_structure'] === true) && currentRole !== 'HOD';
-  const canBatchImport = isSuperAdmin || userPerms['can_batch_import'] === true || userPerms['can_import_data'] === true;
-  const canManageSettings = isSuperAdmin;
-  const canViewCurrency = checkCanViewCurrency(currentRole || undefined, userPerms, isSuperAdmin);
-  const canManageCycles = checkCanManageCycles(currentRole || session.user?.role || undefined, userPerms, isSuperAdminUser || isSuperAdmin);
-
   const managementSystem = [
+    ...(canManageRoles && currentRole !== 'SUPER_ADMIN'
+      ? [
+          {
+            key: 'roles',
+            label: 'Manage User Roles',
+            href: '/admin/roles',
+            icon: Users,
+            active: singleActiveKey === 'superadmin' || singleActiveKey === 'roles',
+          },
+        ]
+      : []),
     ...(canManageRates
       ? [
           {
@@ -265,7 +303,7 @@ export function Sidebar({
           },
         ]
       : []),
-    ...(canManageStructure
+    ...(canManageStructure && currentRole !== 'HOD'
       ? [
           {
             key: 'structure',
@@ -300,9 +338,9 @@ export function Sidebar({
       : []),
   ];
 
-  // The section header only renders if the user is a SUPER_ADMIN OR at least one custom permission is true
+  // The section header renders if SUPER_ADMIN OR at least one management module is permitted
   const showManagementSection =
-    (isSuperAdmin || canManageRates || canExportPayroll || canAuditLogs || canManageStructure || canBatchImport) &&
+    (isSuperAdmin || canManageRoles || canManageRates || canExportPayroll || canAuditLogs || canManageStructure || canManageSettings || canBatchImport) &&
     managementSystem.length > 0;
 
   return (
@@ -378,7 +416,7 @@ export function Sidebar({
                     </Link>
 
                     {/* Sub-navigation items rendered under active Teacher link */}
-                    {item.key === 'teacher' && item.active && (onDownloadSlip || (onOpenCurrencySettings && canViewCurrency)) && (
+                    {item.key === 'teacher' && item.active && (onDownloadSlip || (onOpenCurrencySettings && canViewCurrency) || (onOpenCycleSettings && canManageCycles)) && (
                       <div className="ml-3 pl-3 border-l-2 border-[#540225]/20 space-y-1 mt-1.5 mb-2">
                         {/* Download Monthly Slip button */}
                         {onDownloadSlip && (
@@ -389,6 +427,18 @@ export function Sidebar({
                           >
                             <Download className="w-3.5 h-3.5 shrink-0 text-slate-500" />
                             <span className="truncate">Download Monthly Slip</span>
+                          </button>
+                        )}
+
+                        {/* Cycle Settings button */}
+                        {onOpenCycleSettings && canManageCycles && (
+                          <button
+                            type="button"
+                            onClick={onOpenCycleSettings}
+                            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
+                          >
+                            <CalendarCog className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                            <span className="truncate">Cycle Settings</span>
                           </button>
                         )}
 
@@ -407,58 +457,92 @@ export function Sidebar({
                     )}
 
                     {/* Sub-navigation items rendered under active Department (HoD) link */}
-                    {item.key === 'hod' && item.active && onOpenCurrencySettings && canViewCurrency && (
+                    {item.key === 'hod' && item.active && ((onOpenCycleSettings && canManageCycles) || (onOpenCurrencySettings && canViewCurrency)) && (
                       <div className="ml-3 pl-3 border-l-2 border-[#540225]/20 space-y-1 mt-1.5 mb-2">
-                        <button
-                          type="button"
-                          onClick={onOpenCurrencySettings}
-                          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
-                        >
-                          <Coins className="w-3.5 h-3.5 shrink-0 text-slate-500" />
-                          <span className="truncate">Currency Settings</span>
-                        </button>
+                        {/* Cycle Settings button */}
+                        {onOpenCycleSettings && canManageCycles && (
+                          <button
+                            type="button"
+                            onClick={onOpenCycleSettings}
+                            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
+                          >
+                            <CalendarCog className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                            <span className="truncate">Cycle Settings</span>
+                          </button>
+                        )}
+
+                        {/* Currency Settings button */}
+                        {onOpenCurrencySettings && canViewCurrency && (
+                          <button
+                            type="button"
+                            onClick={onOpenCurrencySettings}
+                            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
+                          >
+                            <Coins className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                            <span className="truncate">Currency Settings</span>
+                          </button>
+                        )}
                       </div>
                     )}
 
                     {/* Sub-navigation items rendered under active Teacher Requests link */}
-                    {item.key === 'hod-requests' && item.active && onOpenCurrencySettings && canViewCurrency && (
+                    {item.key === 'hod-requests' && item.active && ((onOpenCycleSettings && canManageCycles) || (onOpenCurrencySettings && canViewCurrency)) && (
                       <div className="ml-3 pl-3 border-l-2 border-[#540225]/20 space-y-1 mt-1.5 mb-2">
-                        <button
-                          type="button"
-                          onClick={onOpenCurrencySettings}
-                          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
-                        >
-                          <Coins className="w-3.5 h-3.5 shrink-0 text-slate-500" />
-                          <span className="truncate">Currency Settings</span>
-                        </button>
+                        {/* Cycle Settings button */}
+                        {onOpenCycleSettings && canManageCycles && (
+                          <button
+                            type="button"
+                            onClick={onOpenCycleSettings}
+                            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
+                          >
+                            <CalendarCog className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                            <span className="truncate">Cycle Settings</span>
+                          </button>
+                        )}
+
+                        {/* Currency Settings button */}
+                        {onOpenCurrencySettings && canViewCurrency && (
+                          <button
+                            type="button"
+                            onClick={onOpenCurrencySettings}
+                            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
+                          >
+                            <Coins className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                            <span className="truncate">Currency Settings</span>
+                          </button>
+                        )}
                       </div>
                     )}
 
                     {/* Sub-navigation items rendered under active Payroll & Finance link */}
-                    {item.key === 'payroll' && item.active && (
+                    {item.key === 'payroll' && item.active && (canExportPayroll || (onOpenCycleSettings && canManageCycles) || (onOpenCurrencySettings && canViewCurrency)) && (
                       <div className="ml-3 pl-3 border-l-2 border-[#540225]/20 space-y-1 mt-1.5 mb-2">
                         {/* 1. Payment Archive link */}
-                        <Link
-                          href="/finance/archive"
-                          className={`flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs transition-all ${
-                            isItemOnArchive
-                              ? 'bg-[#540225] text-white font-bold shadow-xs'
-                              : 'text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] font-medium'
-                          }`}
-                        >
-                          <Archive className={`w-3.5 h-3.5 shrink-0 ${isItemOnArchive ? 'text-white' : 'text-slate-500'}`} />
-                          <span className="truncate">Payment Archive</span>
-                        </Link>
+                        {canExportPayroll && (
+                          <Link
+                            href="/finance/archive"
+                            className={`flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs transition-all ${
+                              isItemOnArchive
+                                ? 'bg-[#540225] text-white font-bold shadow-xs'
+                                : 'text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] font-medium'
+                            }`}
+                          >
+                            <Archive className={`w-3.5 h-3.5 shrink-0 ${isItemOnArchive ? 'text-white' : 'text-slate-500'}`} />
+                            <span className="truncate">Payment Archive</span>
+                          </Link>
+                        )}
 
                         {/* 2. Export to CSV button */}
-                        <button
-                          type="button"
-                          onClick={onExportCSV}
-                          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
-                        >
-                          <Download className="w-3.5 h-3.5 shrink-0 text-slate-500" />
-                          <span className="truncate">Export to CSV</span>
-                        </button>
+                        {onExportCSV && canExportPayroll && (
+                          <button
+                            type="button"
+                            onClick={onExportCSV}
+                            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
+                          >
+                            <Download className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                            <span className="truncate">Export to CSV</span>
+                          </button>
+                        )}
 
                         {/* 3. Cycle Settings button */}
                         {onOpenCycleSettings && canManageCycles && (
@@ -473,14 +557,16 @@ export function Sidebar({
                         )}
 
                         {/* 4. Generate Payroll Report button */}
-                        <button
-                          type="button"
-                          onClick={onGenerateReport}
-                          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
-                        >
-                          <FileText className="w-3.5 h-3.5 shrink-0 text-slate-500" />
-                          <span className="truncate">Generate Payroll Report</span>
-                        </button>
+                        {onGenerateReport && canExportPayroll && (
+                          <button
+                            type="button"
+                            onClick={onGenerateReport}
+                            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
+                          >
+                            <FileText className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                            <span className="truncate">Generate Payroll Report</span>
+                          </button>
+                        )}
 
                         {/* 5. Currency Settings button */}
                         {onOpenCurrencySettings && canViewCurrency && (
@@ -497,16 +583,31 @@ export function Sidebar({
                     )}
 
                     {/* Sub-navigation items rendered under active Coordinator link */}
-                    {item.key === 'coordinator' && item.active && onOpenCurrencySettings && canViewCurrency && (
+                    {item.key === 'coordinator' && item.active && ((onOpenCycleSettings && canManageCycles) || (onOpenCurrencySettings && canViewCurrency)) && (
                       <div className="ml-3 pl-3 border-l-2 border-[#540225]/20 space-y-1 mt-1.5 mb-2">
-                        <button
-                          type="button"
-                          onClick={onOpenCurrencySettings}
-                          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
-                        >
-                          <Coins className="w-3.5 h-3.5 shrink-0 text-slate-500" />
-                          <span className="truncate">Currency Settings</span>
-                        </button>
+                        {/* Cycle Settings button */}
+                        {onOpenCycleSettings && canManageCycles && (
+                          <button
+                            type="button"
+                            onClick={onOpenCycleSettings}
+                            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
+                          >
+                            <CalendarCog className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                            <span className="truncate">Cycle Settings</span>
+                          </button>
+                        )}
+
+                        {/* Currency Settings button */}
+                        {onOpenCurrencySettings && canViewCurrency && (
+                          <button
+                            type="button"
+                            onClick={onOpenCurrencySettings}
+                            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-[#540225] hover:bg-[#eff4ff] transition-all cursor-pointer text-left"
+                          >
+                            <Coins className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                            <span className="truncate">Currency Settings</span>
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -545,31 +646,12 @@ export function Sidebar({
 
         </div>
 
-        {/* Footer Navigation & Status */}
+        {/* Footer Navigation */}
         <div className="p-4 bg-[#eff4ff]/60 border-t border-slate-100">
           <div className="space-y-1.5">
             <a
-              href="#help"
-              className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-slate-600 hover:bg-white hover:text-[#0b1c30] transition-all text-xs font-medium"
-            >
-              <HelpCircle className="w-4 h-4 text-slate-400" />
-              <span>Help &amp; Documentation</span>
-            </a>
-
-            <div className="flex items-center justify-between px-3 py-2 rounded-xl text-slate-600 text-xs font-medium">
-              <span className="flex items-center gap-2">
-                <Radio className="w-3.5 h-3.5 text-slate-400" />
-                <span>System Status</span>
-              </span>
-              <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-white px-2 py-0.5 rounded-full border border-emerald-100 shadow-2xs">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Online
-              </span>
-            </div>
-
-            <a
               href="/auth/signout"
-              className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-[#ba1a1a] hover:bg-red-50 hover:text-red-700 transition-all text-xs font-medium mt-1"
+              className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-[#ba1a1a] hover:bg-red-50 hover:text-red-700 transition-all text-xs font-medium"
             >
               <LogOut className="w-4 h-4 text-[#ba1a1a]" />
               <span>Sign Out</span>

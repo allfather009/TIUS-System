@@ -88,8 +88,11 @@ export function AddUserModal({
 
   const roleOptions: CustomSelectOption[] = [
     { value: 'TEACHER', label: 'Teacher (Lecturer / Lab)', description: 'Self-Service Overtime Logging' },
+    { value: 'DEAN', label: 'Dean', description: 'Faculty Level Leadership (Teacher Flow)' },
+    { value: 'VICE_DEAN', label: 'Vice Dean', description: 'Faculty Level Vice Leadership (Teacher Flow)' },
     { value: 'HOD', label: 'Head of Dept (HoD)', description: 'Departmental Approval Lead' },
     { value: 'COORDINATOR', label: 'Academic Coordinator', description: 'Cross-Faculty Audits & Quotas' },
+    { value: 'IT_ADMIN', label: 'IT Support Admin', description: 'Sub-Admin & Technical Support' },
     { value: 'ACCOUNTANT', label: 'Finance / Accountant', description: 'Payroll & Cash Disbursal' },
   ];
 
@@ -116,13 +119,16 @@ export function AddUserModal({
 
     setSaving(true);
     try {
+      const isTeacherFlow = ['TEACHER', 'DEAN', 'VICE_DEAN'].includes(role);
       const calculatedRate =
-        role === 'TEACHER'
+        isTeacherFlow
           ? getRateForTitle(academicTitle, rates)
           : role === 'HOD'
           ? 65
           : role === 'COORDINATOR'
           ? 55
+          : role === 'IT_ADMIN'
+          ? 50
           : 45;
 
       await onAddUser({
@@ -238,7 +244,7 @@ export function AddUserModal({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {role === 'TEACHER' ? (
+            {['TEACHER', 'DEAN', 'VICE_DEAN'].includes(role) ? (
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
                   <span>Academic Title *</span>

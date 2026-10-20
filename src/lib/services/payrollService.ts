@@ -39,8 +39,21 @@ export async function getPayrollDisbursalSummary(
     const displayCycleName = options.overrideCycleName || activeCycleLabel;
     const supabase = createClient();
 
-    // Determine target status filter (defaults strictly to 'APPROVED' for main active workbench)
-    const targetStatus = options.status || 'APPROVED';
+    // Enforce strict Finance & Payroll Visibility Gate:
+    // Only coordinator-approved requests ('APPROVED' or subsequent payout states 'PAID') can ever be retrieved.
+    // 'PENDING' and 'REJECTED' requests must be completely invisible to the Accountant/Finance portal.
+    const ALLOWED_FINANCE_STATUSES = ['APPROVED', 'PAID'];
+    let safeStatus: string[] = [];
+    if (Array.isArray(options.status)) {
+      safeStatus = options.status.filter((s) => ALLOWED_FINANCE_STATUSES.includes(s));
+    } else if (options.status && ALLOWED_FINANCE_STATUSES.includes(options.status)) {
+      safeStatus = [options.status];
+    } else {
+      safeStatus = ['APPROVED'];
+    }
+    if (safeStatus.length === 0) {
+      safeStatus = ['APPROVED'];
+    }
 
     // Determine date boundaries
     let filterStartDate: string | undefined = undefined;
@@ -58,16 +71,11 @@ export async function getPayrollDisbursalSummary(
       filterEndDate = `${options.month}-${String(lastDay).padStart(2, '0')}`;
     }
 
-    // Build Supabase query
+    // Build Supabase query strictly gated to coordinator-approved / paid requests
     let query = supabase
       .from('timesheets')
-      .select('*, teacher:users!timesheets_teacher_id_fkey!inner(*, department:departments(*))');
-
-    if (Array.isArray(targetStatus)) {
-      query = query.in('status', targetStatus);
-    } else {
-      query = query.eq('status', targetStatus);
-    }
+      .select('*, teacher:users!timesheets_teacher_id_fkey!inner(*, department:departments(*)), submitted_by:users!timesheets_submitted_by_id_fkey(id, name, email, role, academic_title)')
+      .in('status', safeStatus);
 
     if (filterStartDate) {
       query = query.gte('date', filterStartDate);
@@ -139,6 +147,9 @@ export async function getPayrollDisbursalSummary(
         if (isFT) ftHours += hours;
         else ptHours += hours;
 
+        const submitterName = ts.submitted_by?.name || (ts.submitted_by_id && ts.teacher?.id === ts.submitted_by_id ? ts.teacher.name : 'Head of Department');
+        const approvedByName = 'Academic Coordinator';
+
         if (!deptMap.has(deptId)) {
           deptMap.set(deptId, {
             id: deptId,
@@ -173,6 +184,8 @@ export async function getPayrollDisbursalSummary(
             calculatedGross: 0,
             requestedAt: ts.created_at,
             approvedAt: ts.approved_at || ts.updated_at,
+            submittedByName: submitterName,
+            approvedByName,
             status: ts.status === 'PAID' ? 'Paid' : 'Approved',
             departmentName: deptName,
             academicRank: teacher.academic_title || 'Lecturer',
@@ -183,6 +196,9 @@ export async function getPayrollDisbursalSummary(
         teacherRow.billedHours += hours;
         teacherRow.calculatedGross += hours * rate;
         teacherRow.timesheetIds.push(ts.id);
+        if (!teacherRow.submittedByName && submitterName) {
+          teacherRow.submittedByName = submitterName;
+        }
 
         const breakdownEntry: TimesheetBreakdownEntry = {
           id: ts.id,
@@ -195,6 +211,8 @@ export async function getPayrollDisbursalSummary(
           notes: ts.notes || undefined,
           createdAt: ts.created_at,
           approvedAt: ts.approved_at || ts.updated_at,
+          submittedByName: submitterName,
+          approvedByName,
         };
         teacherRow.timesheetEntries.push(breakdownEntry);
 
@@ -229,7 +247,7 @@ export async function getPayrollDisbursalSummary(
           facultyCount: rows.length,
           totalDeptHours,
           subtotalGross,
-          hodSignedStatus: 'HoD: Signed & Audited',
+          hodSignedStatus: 'Coordinator: Approved & Audited',
           isInitiallyExpanded: true,
           rows,
         });
@@ -249,7 +267,7 @@ export async function getPayrollDisbursalSummary(
         finalizedCount: totalEligibleTeachers,
         pendingDisbursalCount: 0,
         verificationPercent: 100,
-        auditSignOffSummary: `${departmentGroups.length}/${departmentGroups.length} HoD Signed • Ready for Disbursal`,
+        auditSignOffSummary: `${departmentGroups.length}/${departmentGroups.length} Coordinator Approved • Ready for Disbursal`,
         batchReferenceId: `TIU-PR-${Date.now().toString().slice(-6)}`,
         departments: departmentGroups,
         settings,
@@ -271,10 +289,15 @@ export async function getHistoricalPayrollCycles(status: 'PAID' | 'APPROVED' | '
     const supabase = createClient();
     const settings = await getPayrollSettings();
 
-    // Query dates of timesheets
+    // Query dates of timesheets strictly restricted to approved/paid states
     let query = supabase.from('timesheets').select('date');
-    if (status !== 'ALL') {
-      query = query.eq('status', status);
+    if (status === 'PAID') {
+      query = query.eq('status', 'PAID');
+    } else if (status === 'APPROVED') {
+      query = query.eq('status', 'APPROVED');
+    } else {
+      // In Finance & Payroll, 'ALL' must ONLY query APPROVED and PAID requests, never PENDING or REJECTED
+      query = query.in('status', ['APPROVED', 'PAID']);
     }
     const { data: timesheets } = await query;
 
@@ -367,11 +390,71 @@ export function formatDateTime(dateStr?: string | null): string {
   }
 }
 
+export async function markTimesheetsPaid(
+  timesheetIds: string[]
+): Promise<{ success: boolean; error?: string }> {
+  if (!timesheetIds || timesheetIds.length === 0) {
+    return { success: true };
+  }
+
+  // 1. Try updating via /api/requests PATCH (server-side admin execution with audit log)
+  try {
+    const res = await fetch('/api/requests', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: timesheetIds,
+        status: 'PAID',
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success) {
+        return { success: true };
+      }
+    } else {
+      const errData = await res.json().catch(() => null);
+      if (errData?.error) {
+        console.warn('API /api/requests returned error, trying direct update fallback:', errData.error);
+      }
+    }
+  } catch (apiErr) {
+    console.warn('Network or API /api/requests error, trying direct Supabase update:', apiErr);
+  }
+
+  // 2. Direct Supabase client update fallback
+  try {
+    const supabase = createClient();
+    const { error: updateError } = await supabase
+      .from('timesheets')
+      .update({
+        status: 'PAID',
+        updated_at: new Date().toISOString(),
+      })
+      .in('id', timesheetIds);
+
+    if (updateError) {
+      const errorMsg = updateError.message || updateError.details || JSON.stringify(updateError);
+      console.error('Error marking timesheets as PAID in Supabase:', errorMsg, updateError);
+      return { success: false, error: errorMsg };
+    }
+
+    return { success: true };
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('Exception marking timesheets as PAID:', errorMsg);
+    return { success: false, error: errorMsg };
+  }
+}
+
 export function exportPayrollToCSV(departments: DepartmentPayrollGroup[], filename = 'TIU_Payroll_Cash_Disbursal.csv') {
   const headers = [
-    'FACULTY MEMBER',
+    'FACULTY BENEFICIARY',
     'EMAIL',
     'DEPARTMENT',
+    'SUBMITTED BY (HOD)',
+    'APPROVED BY (COORDINATOR)',
     'CONTRACT TYPE',
     'APPROVED RATE (USD/HR)',
     'BILLED HOURS (HRS)',
@@ -389,6 +472,8 @@ export function exportPayrollToCSV(departments: DepartmentPayrollGroup[], filena
           `"${row.name}"`,
           `"${row.email}"`,
           `"${dept.name}"`,
+          `"${row.submittedByName || 'Head of Department'}"`,
+          `"${row.approvedByName || 'Academic Coordinator'}"`,
           `"${row.contractType}"`,
           `"${row.approvedRate.toFixed(2)}"`,
           `"${row.billedHours.toFixed(1)}"`,

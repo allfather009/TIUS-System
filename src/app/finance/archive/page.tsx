@@ -58,12 +58,9 @@ export default function PaymentArchivePage() {
   const [isCurrencySettingsModalOpen, setIsCurrencySettingsModalOpen] = useState(false);
   const [isCashSlipsModalOpen, setIsCashSlipsModalOpen] = useState(false);
 
-  const userPerms = (session.user?.custom_permissions || {}) as Record<string, boolean>;
-  const canManageCycles = checkCanManageCycles(
-    session.user?.role || session.role || 'ACCOUNTANT',
-    userPerms,
-    session.isSuperAdmin
-  );
+  const canManageCycles = session.hasPermission?.('can_lock_cycles') ?? false;
+  const canViewCurrency = session.hasPermission?.('can_view_currency_settings') ?? false;
+  const canExportPayroll = session.hasPermission?.('can_export_payroll') ?? false;
 
   // Toast notifications
   const [toastMessage, setToastMessage] = useState<{ title: string; desc: string } | null>(null);
@@ -214,10 +211,10 @@ export default function PaymentArchivePage() {
       {/* Navigation Sidebar with active Payroll & Finance and Payment Archive link highlighted */}
       <Sidebar
         activeItem="payroll"
-        onExportCSV={handleExportCSV}
-        onOpenCycleSettings={() => setIsCycleSettingsModalOpen(true)}
-        onGenerateReport={() => setIsReportModalOpen(true)}
-        onOpenCurrencySettings={() => setIsCurrencySettingsModalOpen(true)}
+        onExportCSV={canExportPayroll ? handleExportCSV : undefined}
+        onOpenCycleSettings={canManageCycles ? () => setIsCycleSettingsModalOpen(true) : undefined}
+        onGenerateReport={canExportPayroll ? () => setIsReportModalOpen(true) : undefined}
+        onOpenCurrencySettings={canViewCurrency ? () => setIsCurrencySettingsModalOpen(true) : undefined}
       />
 
       {/* Main Content Container Offset by Sidebar */}

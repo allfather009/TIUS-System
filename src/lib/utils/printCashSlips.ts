@@ -94,6 +94,16 @@ export function printCashSlipsWindow(
                 <span class="meta-value">${printDate}</span>
               </div>
             </div>
+            <div class="meta-strip" style="margin-top: 4px; font-size: 10px;">
+              <div class="meta-item">
+                <span class="meta-label">Submitted By (HoD):</span>
+                <span class="meta-value">${row.submittedByName || 'Head of Department'}</span>
+              </div>
+              <div class="meta-item">
+                <span class="meta-label">Approved By:</span>
+                <span class="meta-value font-bold" style="color: #047857;">${row.approvedByName || 'Academic Coordinator'}</span>
+              </div>
+            </div>
 
             ${amountHtml}
           </div>

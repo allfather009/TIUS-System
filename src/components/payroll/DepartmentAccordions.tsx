@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, Banknote, Search } from 'lucide-react';
+import { ChevronDown, ChevronUp, Banknote, Search, CheckCircle2 } from 'lucide-react';
 import { DepartmentPayrollGroup, PayrollFacultyRow } from '@/types/payroll';
 import { TeacherLogsModal } from './TeacherLogsModal';
 
@@ -162,8 +162,10 @@ export function DepartmentAccordions({
                       className="w-4 h-4 rounded border-slate-300 text-[#540225] focus:ring-[#721c3b] cursor-pointer"
                     />
                   </th>
-                  <th className="py-3 px-6">Faculty Member</th>
+                  <th className="py-3 px-6">Faculty Beneficiary</th>
                   <th className="py-3 px-4">Department</th>
+                  <th className="py-3 px-4">Submitted By (HoD)</th>
+                  <th className="py-3 px-4">Approved By (Coordinator)</th>
                   <th className="py-3 px-4">Contract Type</th>
                   <th className="py-3 px-4">Approved Rate</th>
                   <th className="py-3 px-4">Billed Hours</th>
@@ -175,7 +177,7 @@ export function DepartmentAccordions({
               <tbody className="divide-y divide-slate-100 text-xs">
                 {allRows.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-12 text-center text-slate-400">
+                    <td colSpan={11} className="py-12 text-center text-slate-400">
                       No faculty records match your criteria.
                     </td>
                   </tr>
@@ -198,7 +200,7 @@ export function DepartmentAccordions({
                         />
                       </td>
 
-                      {/* Faculty Member */}
+                      {/* Faculty Beneficiary */}
                       <td className="py-3 px-6">
                         <div className="flex items-center gap-3">
                           <div
@@ -216,8 +218,26 @@ export function DepartmentAccordions({
                       </td>
 
                       {/* Department */}
-                      <td className="py-3 px-4 text-slate-700 font-medium truncate max-w-[200px]">
+                      <td className="py-3 px-4 text-slate-700 font-medium truncate max-w-[180px]">
                         {row.departmentTitle}
+                      </td>
+
+                      {/* Submitted By (HoD) */}
+                      <td className="py-3 px-4">
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-slate-800 text-[11px] truncate max-w-[140px]" title={row.submittedByName || 'Head of Department'}>
+                            {row.submittedByName || 'Head of Department'}
+                          </span>
+                          <span className="text-[10px] text-slate-400">HoD Submitter</span>
+                        </div>
+                      </td>
+
+                      {/* Approved By (Coordinator) */}
+                      <td className="py-3 px-4">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-semibold border border-emerald-200">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>{row.approvedByName || 'Coordinator'}</span>
+                        </span>
                       </td>
 
                       {/* Contract Type */}
@@ -403,7 +423,9 @@ export function DepartmentAccordions({
                             className="w-4 h-4 rounded border-slate-300 text-[#540225] focus:ring-[#721c3b] cursor-pointer"
                           />
                         </th>
-                        <th className="py-3 px-6">Faculty Member</th>
+                        <th className="py-3 px-6">Faculty Beneficiary</th>
+                        <th className="py-3 px-4">Submitted By (HoD)</th>
+                        <th className="py-3 px-4">Approved By (Coordinator)</th>
                         <th className="py-3 px-4">Contract Type</th>
                         <th className="py-3 px-4">Approved Rate</th>
                         <th className="py-3 px-4">Billed Hours</th>
@@ -415,7 +437,7 @@ export function DepartmentAccordions({
                     <tbody className="divide-y divide-slate-100 text-xs">
                       {visibleRows.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-8 text-center text-slate-400">
+                          <td colSpan={10} className="py-8 text-center text-slate-400">
                             No matching faculty members in this department.
                           </td>
                         </tr>
@@ -438,7 +460,7 @@ export function DepartmentAccordions({
                               />
                             </td>
 
-                            {/* Faculty Member */}
+                            {/* Faculty Beneficiary */}
                             <td className="py-3.5 px-6">
                               <div className="flex items-center gap-3">
                                 <div
@@ -457,6 +479,24 @@ export function DepartmentAccordions({
                                   </span>
                                 </div>
                               </div>
+                            </td>
+
+                            {/* Submitted By (HoD) */}
+                            <td className="py-3.5 px-4">
+                              <div className="flex flex-col">
+                                <span className="font-semibold text-slate-800 text-[11px] truncate max-w-[140px]" title={row.submittedByName || 'Head of Department'}>
+                                  {row.submittedByName || 'Head of Department'}
+                                </span>
+                                <span className="text-[10px] text-slate-400">HoD Submitter</span>
+                              </div>
+                            </td>
+
+                            {/* Approved By (Coordinator) */}
+                            <td className="py-3.5 px-4">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-semibold border border-emerald-200">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span>{row.approvedByName || 'Coordinator'}</span>
+                              </span>
                             </td>
 
                             {/* Contract Type */}

@@ -5,11 +5,14 @@
 
 -- 1. Create custom ENUM types
 DO $$ BEGIN
-    CREATE TYPE user_role AS ENUM ('SUPER_ADMIN', 'COORDINATOR', 'HOD', 'TEACHER', 'ACCOUNTANT');
+    CREATE TYPE user_role AS ENUM ('SUPER_ADMIN', 'IT_ADMIN', 'COORDINATOR', 'HOD', 'DEAN', 'VICE_DEAN', 'TEACHER', 'ACCOUNTANT');
 EXCEPTION
     WHEN duplicate_object THEN 
         BEGIN
             ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'SUPER_ADMIN' BEFORE 'COORDINATOR';
+            ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'IT_ADMIN';
+            ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'DEAN';
+            ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'VICE_DEAN';
         EXCEPTION
             WHEN others THEN null;
         END;

@@ -45,7 +45,7 @@ export default function SuperAdminRolesPage() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const forcedRole = params.get('role');
-      if (forcedRole === 'COORDINATOR' || forcedRole === 'SUPER_ADMIN' || forcedRole === 'HOD' || forcedRole === 'TEACHER') {
+      if (['SUPER_ADMIN', 'IT_ADMIN', 'COORDINATOR', 'HOD', 'DEAN', 'VICE_DEAN', 'TEACHER', 'ACCOUNTANT'].includes(forcedRole || '')) {
         setActiveRole(forcedRole as UserRole);
         return;
       }
@@ -149,7 +149,8 @@ export default function SuperAdminRolesPage() {
     academicTitle?: string | null,
     hourlyRate?: number | null,
     departmentIds?: string[] | null,
-    departmentNames?: string[] | null
+    departmentNames?: string[] | null,
+    managedDepartmentIds?: string[] | null
   ) => {
     const res = await updateUserRole(
       userId,
@@ -158,7 +159,8 @@ export default function SuperAdminRolesPage() {
       academicTitle,
       hourlyRate,
       departmentIds,
-      departmentNames
+      departmentNames,
+      managedDepartmentIds
     );
     if (res.success && res.user) {
       setUsers((prev) =>
@@ -216,9 +218,15 @@ export default function SuperAdminRolesPage() {
   };
 
   // --------------------------------------------------------------------------
-  // STRICT ACCESS BARRIER: IF NOT SUPER_ADMIN, BLOCK ACCESS!
+  // STRICT ACCESS BARRIER: IF NOT PERMITTED TO MANAGE ROLES, BLOCK ACCESS!
   // --------------------------------------------------------------------------
-  if (sessionChecked && activeRole !== 'SUPER_ADMIN') {
+  const isAuthorizedToManageRoles =
+    activeRole === 'SUPER_ADMIN' ||
+    session.isSuperAdmin ||
+    session.hasPermission?.('can_manage_roles') ||
+    session.user?.custom_permissions?.['can_manage_roles'] === true;
+
+  if (sessionChecked && !isAuthorizedToManageRoles) {
     return (
       <div className="min-h-screen bg-[#f8f9ff] flex flex-col justify-between">
         {/* Navigation Sidebar reflecting the non-super-admin user */}
@@ -283,13 +291,15 @@ export default function SuperAdminRolesPage() {
     );
   }
 
+  const currentEffectiveRole = session.role || session.user?.role || activeRole;
+
   // --------------------------------------------------------------------------
-  // SUPER ADMIN AUTHORIZED VIEW
+  // AUTHORIZED VIEW (SUPER_ADMIN OR PERMITTED ROLE)
   // --------------------------------------------------------------------------
   return (
     <div className="min-h-screen bg-[#f8f9ff]">
-      {/* Navigation Sidebar with Super Admin Portal distinctly active */}
-      <Sidebar activeItem="superadmin" activeRole="SUPER_ADMIN" />
+      {/* Navigation Sidebar reflecting active role */}
+      <Sidebar activeItem="superadmin" activeRole={currentEffectiveRole} />
 
       {/* Main Container Offset by Sidebar */}
       <div className="pl-72">
@@ -299,7 +309,7 @@ export default function SuperAdminRolesPage() {
           breadcrumbPage="Role &amp; Permission Governance"
           searchQuery={globalSearch}
           onSearchChange={setGlobalSearch}
-          activeViewLabel="Super Admin"
+          activeViewLabel={session.activeViewLabel || (currentEffectiveRole === 'SUPER_ADMIN' ? 'Super Admin' : currentEffectiveRole)}
         />
 
         {/* Page Content */}

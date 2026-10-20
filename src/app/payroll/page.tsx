@@ -16,6 +16,7 @@ import {
   exportPayrollToCSV,
   getPayrollDisbursalSummary,
   getHistoricalPayrollCycles,
+  markTimesheetsPaid,
   HistoricalCycleOption,
 } from '@/lib/services/payrollService';
 import {
@@ -63,11 +64,11 @@ export default function PayrollPage() {
   const [isCashSlipsModalOpen, setIsCashSlipsModalOpen] = useState(false);
 
   const userPerms = (session.user?.custom_permissions || {}) as Record<string, boolean>;
-  const canManageCycles = checkCanManageCycles(
-    session.user?.role || session.role || 'ACCOUNTANT',
-    userPerms,
-    session.isSuperAdmin
-  );
+  const canManageCycles = session.hasPermission?.('can_lock_cycles') ?? false;
+  const canViewCurrency = session.hasPermission?.('can_view_currency_settings') ?? false;
+  const canEditCurrency = session.hasPermission?.('can_manage_currency') ?? false;
+  const canExportPayroll = session.hasPermission?.('can_export_payroll') ?? false;
+  const canViewAllDepartments = session.hasPermission?.('can_view_all_departments') ?? false;
 
   // Toast notifications
   const [toastMessage, setToastMessage] = useState<{ title: string; desc: string } | null>(null);
@@ -96,8 +97,7 @@ export default function PayrollPage() {
       setSettings(loadedSettings);
       setCurrency(loadedSystemSettings.base_currency);
       setExchangeRate(loadedSystemSettings.exchange_rate);
-      const canEdit = checkCanEditCurrency('ACCOUNTANT', userPerms, session.isSuperAdmin);
-      setFinanceCanEditExchange(canEdit);
+      setFinanceCanEditExchange(canEditCurrency);
       setAvailableCycles(
         loadedCycles.map((c) =>
           c.value === 'all' ? { ...c, label: 'All Active Approved' } : c
@@ -112,10 +112,23 @@ export default function PayrollPage() {
     loadData(selectedMonth);
   }, [selectedMonth]);
 
-  // Collect all faculty rows across departments
+  // Filter departments based on canViewAllDepartments permission
+  const effectiveDepartments = useMemo(() => {
+    if (canViewAllDepartments || session.isSuperAdmin) {
+      return summary.departments;
+    }
+    const allowedDeptIds = new Set<string>();
+    if (Array.isArray(session.user?.department_ids)) {
+      session.user.department_ids.forEach((id) => allowedDeptIds.add(id));
+    }
+    if (allowedDeptIds.size === 0) return [];
+    return summary.departments.filter((d) => allowedDeptIds.has(d.id));
+  }, [summary.departments, canViewAllDepartments, session.isSuperAdmin, session.user]);
+
+  // Collect all faculty rows across permitted departments
   const allRows = useMemo(() => {
-    return summary.departments.flatMap((d) => d.rows);
-  }, [summary]);
+    return effectiveDepartments.flatMap((d) => d.rows);
+  }, [effectiveDepartments]);
 
   // Removed auto-select all rows on load so checkboxes default to unchecked
 
@@ -150,7 +163,8 @@ export default function PayrollPage() {
 
   // Handle Export CSV
   const handleExportCSV = () => {
-    exportPayrollToCSV(summary.departments);
+    if (!canExportPayroll) return;
+    exportPayrollToCSV(effectiveDepartments);
     showToast(
       'Payroll Export Downloaded',
       'TIU_Payroll_Cash_Disbursal.csv generated with timestamp audit columns.'
@@ -195,19 +209,15 @@ export default function PayrollPage() {
       // 1. Collect all timesheet IDs for selected faculty members
       const selectedTimesheetIds = Array.from(new Set(selectedRows.flatMap((r) => r.timesheetIds)));
 
-      // 2. Execute Supabase mutation: update timesheets from APPROVED to PAID
+      // 2. Mark timesheets from APPROVED to PAID via server service
       if (selectedTimesheetIds.length > 0) {
-        const supabase = createClient();
-        const { error: updateError } = await supabase
-          .from('timesheets')
-          .update({
-            status: 'PAID',
-            updated_at: new Date().toISOString(),
-          })
-          .in('id', selectedTimesheetIds);
-
-        if (updateError) {
-          console.error('Error marking timesheets as PAID in Supabase:', updateError);
+        const payRes = await markTimesheetsPaid(selectedTimesheetIds);
+        if (!payRes.success) {
+          console.error('Failed to mark timesheets as PAID:', payRes.error);
+          showToast(
+            'Payment Warning',
+            `Cash slips printed, but updating status to PAID in database had an issue: ${payRes.error || 'Check permissions'}`
+          );
         }
       }
 
@@ -249,10 +259,10 @@ export default function PayrollPage() {
       {/* Navigation Sidebar with Payroll & Finance highlighted in burgundy and relocated actions */}
       <Sidebar
         activeItem="payroll"
-        onExportCSV={handleExportCSV}
-        onOpenCycleSettings={() => setIsCycleSettingsModalOpen(true)}
-        onGenerateReport={() => setIsReportModalOpen(true)}
-        onOpenCurrencySettings={() => setIsCurrencySettingsModalOpen(true)}
+        onExportCSV={canExportPayroll ? handleExportCSV : undefined}
+        onOpenCycleSettings={canManageCycles ? () => setIsCycleSettingsModalOpen(true) : undefined}
+        onGenerateReport={canExportPayroll ? () => setIsReportModalOpen(true) : undefined}
+        onOpenCurrencySettings={canViewCurrency ? () => setIsCurrencySettingsModalOpen(true) : undefined}
       />
 
       {/* Main Content Container Offset by Sidebar */}
@@ -296,7 +306,7 @@ export default function PayrollPage() {
 
             {/* Grouped Department Accordions & Data Table */}
             <DepartmentAccordions
-              departments={summary.departments}
+              departments={effectiveDepartments}
               viewMode={viewMode}
               searchQuery={searchQuery}
               statusFilter={statusFilter}
@@ -324,8 +334,8 @@ export default function PayrollPage() {
 
       {/* Report Modal */}
       <PayrollReportModal
-        summary={summary}
-        isOpen={isReportModalOpen}
+        summary={{ ...summary, departments: effectiveDepartments }}
+        isOpen={isReportModalOpen && canExportPayroll}
         onClose={() => setIsReportModalOpen(false)}
         onExportCSV={handleExportCSV}
         currency={currency}

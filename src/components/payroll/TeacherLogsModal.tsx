@@ -123,7 +123,8 @@ export function TeacherLogsModal({
                       <th className="py-3 px-4">Date</th>
                       <th className="py-3 px-4">Duration</th>
                       <th className="py-3 px-4">Activity Description</th>
-                      <th className="py-3 px-4">Approved By HoD</th>
+                      <th className="py-3 px-4">Submitted By (HoD)</th>
+                      <th className="py-3 px-4">Coordinator Approval</th>
                       <th className="py-3 px-4 text-right">Status</th>
                       <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
@@ -168,11 +169,19 @@ export function TeacherLogsModal({
                             )}
                           </td>
 
-                          {/* HoD Approval Date */}
+                          {/* Submitter */}
+                          <td className="py-3 px-4 text-slate-700 whitespace-nowrap">
+                            <div className="font-semibold text-slate-800 text-[11px]">
+                              {entry.submittedByName || facultyRow.submittedByName || 'Head of Department'}
+                            </div>
+                            <div className="text-[10px] text-slate-400">HoD Submitter</div>
+                          </td>
+
+                          {/* Coordinator Approval Date */}
                           <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
-                            <div className="flex items-center gap-1.5 text-[11px]">
+                            <div className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-800">
                               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                              <span>{formatDateTime(entry.approvedAt)}</span>
+                              <span>Coordinator: {formatDateTime(entry.approvedAt)}</span>
                             </div>
                           </td>
 
