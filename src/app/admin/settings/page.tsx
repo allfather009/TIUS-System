@@ -497,7 +497,7 @@ export default function AdminSettingsPage() {
   if (!loading && !isAuthorizedToManageSettings) {
     return (
       <div className="min-h-screen bg-[#f8f9ff] flex flex-col justify-between">
-        <Sidebar activeRole={activeRole} />
+        <Sidebar activeRole={activeRole || undefined} />
         <div className="pl-72 flex-1 flex flex-col">
           <Header
             breadcrumbCategory="TIU Central Administration"

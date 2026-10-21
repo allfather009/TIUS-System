@@ -24,10 +24,10 @@ export interface SessionUser {
 }
 
 interface SessionContextType {
-  role: UserRole;
-  user: SessionUser;
-  activeUser: SessionUser;
-  realUser: SessionUser;
+  role: UserRole | null;
+  user: SessionUser | null;
+  activeUser: SessionUser | null;
+  realUser: SessionUser | null;
   simulatedUser: SessionUser | null;
   isSimulating: boolean;
   isSimulation: boolean;
@@ -178,11 +178,11 @@ export function SessionProvider({
     return 'SUPER_ADMIN';
   };
 
-  // 1. Real Authenticated User State (Must never be overwritten by simulation)
-  const [realUser, setRealUser] = useState<SessionUser>(() => {
+  // 1. Real Authenticated User State (Must never be overwritten by simulation; strictly null for unauthenticated guests)
+  const [realUser, setRealUser] = useState<SessionUser | null>(() => {
     if (initialRealUser) return initialRealUser;
     if (initialSession && !initialSession.isSimulation) return initialSession;
-    return DEFAULT_USERS.SUPER_ADMIN;
+    return null;
   });
 
   // 2. Simulation States
@@ -269,9 +269,9 @@ export function SessionProvider({
               : {};
           setCustomPermissions(freshPerms);
           if (isSimulating && simulatedUser) {
-            setSimulatedUser((prev) => prev ? { ...prev, custom_permissions: freshPerms } : null);
+            setSimulatedUser((prev) => (prev ? { ...prev, custom_permissions: freshPerms } : null));
           } else {
-            setRealUser((prev) => ({ ...prev, custom_permissions: freshPerms }));
+            setRealUser((prev) => (prev ? { ...prev, custom_permissions: freshPerms } : null));
           }
         }
       }
@@ -280,19 +280,19 @@ export function SessionProvider({
     }
   };
 
-  const [role, setRoleState] = useState<UserRole>(() => {
+  const [role, setRoleState] = useState<UserRole | null>(() => {
     if (initialRole && initialRole in DEFAULT_USERS) return initialRole;
     if (initialSimulatedUser?.role && initialSimulatedUser.role in DEFAULT_USERS) return initialSimulatedUser.role;
     if (initialRealUser?.role && initialRealUser.role in DEFAULT_USERS) return initialRealUser.role;
-    return getDeterministicRole(pathname);
+    return null;
   });
 
   const [prevPathname, setPrevPathname] = useState(pathname);
 
   if (pathname !== prevPathname) {
     setPrevPathname(pathname);
-    // If navigating back to /admin/roles, make sure role is SUPER_ADMIN if not simulating
-    if (pathname.startsWith('/admin/roles') && !isSimulating && role !== 'SUPER_ADMIN') {
+    // If navigating back to /admin/roles, make sure role is SUPER_ADMIN if real user is Super Admin
+    if (pathname.startsWith('/admin/roles') && !isSimulating && realUser?.role === 'SUPER_ADMIN') {
       setRoleState('SUPER_ADMIN');
     }
   }
@@ -302,10 +302,6 @@ export function SessionProvider({
     // 1. URL search params override (dev/preview testing)
     const params = new URLSearchParams(window.location.search);
     const queryRole = params.get('role');
-    if (queryRole && queryRole in DEFAULT_USERS) {
-      setRoleState(queryRole as UserRole);
-      return;
-    }
 
     // 2. Parse primary session cookie (real user)
     const cookieMatch = document.cookie.match(/tius_session=([^;]+)/);
@@ -315,10 +311,10 @@ export function SessionProvider({
         const raw = cookieMatch[1];
         const decoded = raw.includes('%') ? decodeURIComponent(raw) : raw;
         const session = JSON.parse(decoded);
-        if (session && typeof session === 'object' && !session.isSimulation) {
+        if (session && typeof session === 'object' && !session.isSimulation && session.id && session.role) {
           parsedRealUser = session;
           setRealUser((prev) => ({
-            ...prev,
+            ...(prev || {}),
             ...session,
             isSimulation: false,
           }));
@@ -328,23 +324,39 @@ export function SessionProvider({
       }
     }
 
-    // 3. Parse simulation cookies
+    // Unauthenticated guest check: if no real user in cookie, state, or initial props, remain strictly null
+    if (!parsedRealUser && !initialRealUser && !realUser) {
+      setRealUser(null);
+      setRoleState(null);
+      setIsSimulating(false);
+      setSimulatedUser(null);
+      return;
+    }
+
+    const effectiveRealRole = parsedRealUser?.role || realUser?.role;
+    const isSuperAdminReal = effectiveRealRole === 'SUPER_ADMIN';
+
+    if (queryRole && queryRole in DEFAULT_USERS && isSuperAdminReal) {
+      setRoleState(queryRole as UserRole);
+      return;
+    }
+
+    // 3. Parse simulation cookies (ONLY valid if real user is Super Admin)
     const simCookieMatch = document.cookie.match(/tius_simulated_user=([^;]+)/);
     const simRoleMatch = document.cookie.match(/simulated_role=([^;]+)/);
-    let parsedSimUser: any = null;
-
+    let parsedSimUser: SessionUser | null = null;
     if (simCookieMatch) {
       try {
         const raw = simCookieMatch[1];
         const decoded = raw.includes('%') ? decodeURIComponent(raw) : raw;
-        parsedSimUser = JSON.parse(decoded);
+        const sim = JSON.parse(decoded);
+        if (sim && typeof sim === 'object' && sim.id && sim.role) {
+          parsedSimUser = sim;
+        }
       } catch {
         // ignore parse error
       }
     }
-
-    const effectiveRealRole = parsedRealUser?.role || realUser.role;
-    const isSuperAdminReal = effectiveRealRole === 'SUPER_ADMIN';
 
     if (isSuperAdminReal && (parsedSimUser || simRoleMatch)) {
       setIsSimulating(true);
@@ -431,13 +443,18 @@ export function SessionProvider({
           return;
         }
 
-        // If not simulating: Sync real user's permissions and session
-        let targetId: string | null = parsedRealUser?.id || realUser.id || null;
-        let targetEmail: string | null = parsedRealUser?.email || realUser.email || null;
+        // If not simulating: Sync real user's permissions and session ONLY if verified user exists
+        let targetId: string | null = parsedRealUser?.id || realUser?.id || null;
+        let targetEmail: string | null = parsedRealUser?.email || realUser?.email || null;
 
         const { data: authData } = await supabase.auth.getUser();
         if (authData?.user?.email) targetEmail = authData.user.email;
         if (authData?.user?.id && !targetId) targetId = authData.user.id;
+
+        // If not authenticated, DO NOT query or persist any session
+        if (!targetId && !targetEmail) {
+          return;
+        }
 
         if (targetId || targetEmail) {
           let query = supabase
@@ -549,7 +566,7 @@ export function SessionProvider({
    */
   const simulateUser = async (targetUser: any) => {
     // Strictly gate this feature so it ONLY functions when the logged-in user's real base role is SUPER_ADMIN
-    if (realUser.role !== 'SUPER_ADMIN') {
+    if (realUser?.role !== 'SUPER_ADMIN') {
       console.warn('Simulation feature is exclusively restricted to Super Admin only.');
       return;
     }
@@ -647,8 +664,10 @@ export function SessionProvider({
     // 2. Revert state back to real authenticated Super Admin
     setIsSimulating(false);
     setSimulatedUser(null);
-    setRoleState(realUser.role);
-    setCustomPermissions(realUser.custom_permissions || {});
+    if (realUser) {
+      setRoleState(realUser.role);
+      setCustomPermissions(realUser.custom_permissions || {});
+    }
 
     // 3. Forcefully push back to /admin/roles
     if (typeof window !== 'undefined') {
@@ -679,10 +698,9 @@ export function SessionProvider({
   };
 
   // Active user being displayed in the UI:
-  // If simulating: target user; otherwise: real authenticated user
-  const activeUser: SessionUser = isSimulating && simulatedUser
+  // If simulating: target user; otherwise: real authenticated user (or null for guests)
+  const activeUser: SessionUser | null = isSimulating && simulatedUser
     ? {
-        ...(DEFAULT_USERS[simulatedUser.role] || DEFAULT_USERS.TEACHER),
         ...simulatedUser,
         role: simulatedUser.role,
         custom_permissions: {
@@ -691,8 +709,8 @@ export function SessionProvider({
         },
         isSimulation: true,
       }
-    : {
-        ...(DEFAULT_USERS[realUser.role] || DEFAULT_USERS.SUPER_ADMIN),
+    : realUser
+    ? {
         ...realUser,
         role: realUser.role,
         custom_permissions: {
@@ -700,16 +718,18 @@ export function SessionProvider({
           ...(realUser.custom_permissions || {}),
         },
         isSimulation: false,
-      };
+      }
+    : null;
 
   // Alias user to activeUser for backward compatibility across all existing components
   const user = activeUser;
-  const activeViewLabel = VIEW_LABELS[role] || 'Super Admin';
-  const isSuperAdmin = !isSimulating && realUser.role === 'SUPER_ADMIN';
+  const activeViewLabel = role ? (VIEW_LABELS[role] || role) : '';
+  const isSuperAdmin = !isSimulating && realUser?.role === 'SUPER_ADMIN';
 
   const hasPermission = (permissionKey: string): boolean => {
+    if (!user && !realUser) return false;
     // 1. SUPER_ADMIN is always true for everything (including simulator)
-    if (!isSimulating && (realUser.role === 'SUPER_ADMIN' || user.role === 'SUPER_ADMIN')) {
+    if (!isSimulating && (realUser?.role === 'SUPER_ADMIN' || user?.role === 'SUPER_ADMIN')) {
       return true;
     }
     // HARD RULE: The Portal/Role Simulator must NEVER be toggleable or accessible to IT_ADMIN or any other role
@@ -720,11 +740,12 @@ export function SessionProvider({
     ) {
       return false;
     }
-    const currentRole = user.role || role;
+    const currentRole = user?.role || role;
+    if (!currentRole) return false;
     return resolveEffectivePermission(
       permissionKey,
       currentRole,
-      user.custom_permissions || customPermissions,
+      user?.custom_permissions || customPermissions,
       rolePermissions
     );
   };
@@ -750,7 +771,7 @@ export function SessionProvider({
         logout,
       }}
     >
-      {isSimulating && realUser.role === 'SUPER_ADMIN' && (
+      {isSimulating && realUser?.role === 'SUPER_ADMIN' && activeUser && (
         <div className="fixed top-0 left-0 right-0 h-10 bg-amber-500 text-white flex items-center justify-center font-semibold text-sm shadow-md z-[99999] px-4">
           <span className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
@@ -772,20 +793,19 @@ export function SessionProvider({
 export function useSession(): SessionContextType {
   const context = useContext(SessionContext);
   if (!context) {
-    // Graceful fallback for components used outside provider or in tests
+    // Graceful fallback for components used outside provider or for unauthenticated guests
     return {
-      role: 'SUPER_ADMIN' as UserRole,
-      user: DEFAULT_USERS.SUPER_ADMIN,
-      activeUser: DEFAULT_USERS.SUPER_ADMIN,
-      realUser: DEFAULT_USERS.SUPER_ADMIN,
+      role: null,
+      user: null,
+      activeUser: null,
+      realUser: null,
       simulatedUser: null,
       isSimulating: false,
       isSimulation: false,
-      activeViewLabel: 'Super Admin',
-      isSuperAdmin: true,
+      activeViewLabel: '',
+      isSuperAdmin: false,
       rolePermissions: DEFAULT_ROLE_PERMISSIONS,
-      hasPermission: (key: string) =>
-        key !== 'can_simulate_roles' && key !== 'simulator' && key !== 'role_simulator',
+      hasPermission: () => false,
       refreshPermissions: async () => {},
       setRole: () => {},
       simulateUser: () => {},

@@ -139,9 +139,9 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // Allow query param override in development or for preview switching
+  // Allow query param override in development or for preview switching ONLY for verified Super Admin
   const queryRole = request.nextUrl.searchParams.get('role');
-  if (queryRole) {
+  if (queryRole && isRealSuperAdmin) {
     userRole = queryRole;
   }
 
@@ -238,43 +238,37 @@ export async function middleware(request: NextRequest) {
     }
   };
 
-  // 1. Root route handling: Redirect authenticated users to their respective default portal
-  if (pathname === '/') {
-    if (userRole) {
-      const url = request.nextUrl.clone();
-      url.pathname = getDefaultPortal(userRole);
-      return NextResponse.redirect(url);
+  const isAuthenticated = !!(user || (realUserId && realUserRole));
+
+  // 1. Unauthenticated route protection: guest visitors must strictly be redirected to /login
+  if (!isAuthenticated) {
+    if (pathname === '/login') {
+      return supabaseResponse;
     }
     const url = request.nextUrl.clone();
     url.pathname = '/login';
+    if (pathname !== '/') {
+      url.searchParams.set('returnTo', pathname);
+    }
     return NextResponse.redirect(url);
   }
 
-  // 2. Login page handling: If already logged in, redirect to default portal
+  // 2. Root route handling: Redirect authenticated users to their respective default portal
+  if (pathname === '/') {
+    const url = request.nextUrl.clone();
+    url.pathname = getDefaultPortal(userRole);
+    return NextResponse.redirect(url);
+  }
+
+  // 3. Login page handling: If already logged in, redirect to default portal
   if (pathname === '/login') {
-    const errorParam = request.nextUrl.searchParams.get('error');
-    if (userRole && !errorParam) {
+    const errorParam = request.nextUrl.searchParams.get('error') || request.nextUrl.searchParams.get('denied');
+    if (!errorParam) {
       const url = request.nextUrl.clone();
       url.pathname = getDefaultPortal(userRole);
       return NextResponse.redirect(url);
     }
     return supabaseResponse;
-  }
-
-  // 3. Unauthenticated route protection
-  const isProtectedPortal =
-    pathname.startsWith('/admin') ||
-    pathname.startsWith('/coordinator') ||
-    pathname.startsWith('/hod') ||
-    pathname.startsWith('/teacher') ||
-    pathname.startsWith('/finance') ||
-    pathname.startsWith('/payroll');
-
-  if (isProtectedPortal && !userRole && !user) {
-    const url = request.nextUrl.clone();
-    url.pathname = '/login';
-    url.searchParams.set('returnTo', pathname);
-    return NextResponse.redirect(url);
   }
 
   // 4. Canonical redirect for legacy /payroll route -> /finance

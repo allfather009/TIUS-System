@@ -26,6 +26,7 @@ export const metadata: Metadata = {
 import { cookies } from 'next/headers';
 import { SessionProvider, DEFAULT_USERS } from '@/lib/context/SessionContext';
 import { UserRole } from '@/types/database';
+import { createClient } from '@/lib/supabase/server';
 
 export default async function RootLayout({
   children,
@@ -47,7 +48,7 @@ export default async function RootLayout({
       const raw = sessionCookie;
       const decoded = raw.includes('%') ? decodeURIComponent(raw) : raw;
       const parsed = JSON.parse(decoded);
-      if (parsed && typeof parsed === 'object') {
+      if (parsed && typeof parsed === 'object' && parsed.id && parsed.role) {
         initialRealUser = parsed;
         if (parsed?.role && parsed.role in DEFAULT_USERS) {
           initialRole = parsed.role as UserRole;
@@ -55,6 +56,43 @@ export default async function RootLayout({
       }
     } catch {
       // ignore parse error
+    }
+  }
+
+  // If no cookie session, check if a real authenticated Supabase user exists
+  if (!initialRealUser) {
+    try {
+      const supabase = await createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: dbUser } = await supabase
+          .from('users')
+          .select('id, name, role, email, academic_title, staff_id, avatar_url, custom_permissions, department_ids, departments, department:departments(name)')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (dbUser) {
+          initialRealUser = {
+            id: dbUser.id,
+            name: dbUser.name,
+            email: dbUser.email,
+            role: dbUser.role as UserRole,
+            roleTitle: dbUser.academic_title || dbUser.role,
+            academic_title: dbUser.academic_title || undefined,
+            avatarUrl: dbUser.avatar_url || '',
+            avatar_url: dbUser.avatar_url || null,
+            staffId: dbUser.staff_id || '',
+            departmentName: (dbUser.department as any)?.name || '',
+            department_ids: dbUser.department_ids || [],
+            departments: dbUser.departments || [],
+            custom_permissions: dbUser.custom_permissions || {},
+            isSimulation: false,
+          };
+          initialRole = dbUser.role as UserRole;
+        }
+      }
+    } catch {
+      // ignore
     }
   }
 

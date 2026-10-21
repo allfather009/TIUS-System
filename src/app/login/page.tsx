@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, Suspense } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { useSession } from '@/lib/context/SessionContext';
@@ -16,6 +16,21 @@ function LoginContent() {
   const [inputEmail, setInputEmail] = useState('');
   const [inputPassword, setInputPassword] = useState('');
   const [showPasswordForm, setShowPasswordForm] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.removeItem('tius_session_role');
+      localStorage.removeItem('tius_session_email');
+      localStorage.removeItem('tius_custom_permissions');
+      localStorage.removeItem('tius_simulated_user');
+      localStorage.removeItem('simulated_role');
+      localStorage.removeItem('simulated_user_id');
+    } catch {}
+
+    document.cookie = 'tius_simulated_user=; path=/; max-age=0; SameSite=Lax';
+    document.cookie = 'simulated_role=; path=/; max-age=0; SameSite=Lax';
+    document.cookie = 'simulated_user_id=; path=/; max-age=0; SameSite=Lax';
+  }, []);
 
   const deniedParam = searchParams.get('denied');
   const errorParam = searchParams.get('error');

@@ -480,7 +480,7 @@ export function Sidebar({
     managementSystem.length > 0;
 
   return (
-    <aside className={`fixed left-0 ${(session.isSimulating || session.user.isSimulation) ? 'top-10 h-[calc(100vh-40px)]' : 'top-0 h-screen'} w-72 bg-white z-50 flex flex-col justify-between shadow-[0_1px_8px_rgba(0,0,0,0.04)] border-r border-slate-100 transition-all`}>
+    <aside className={`fixed left-0 ${(session.isSimulating || session.user?.isSimulation) ? 'top-10 h-[calc(100vh-40px)]' : 'top-0 h-screen'} w-72 bg-white z-50 flex flex-col justify-between shadow-[0_1px_8px_rgba(0,0,0,0.04)] border-r border-slate-100 transition-all`}>
       <div className="flex flex-col h-full overflow-hidden">
         {/* Institutional Brand Header */}
         <div className="px-6 pt-6 pb-4 flex items-center gap-3 border-b border-slate-50">
