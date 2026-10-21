@@ -43,10 +43,10 @@ export default function AuditLogsPage() {
                 You do not possess the required clearance (<code className="font-mono text-xs bg-slate-100 px-1 py-0.5 rounded">can_audit_logs</code>) to view administrative audit trails.
               </p>
               <Link
-                href="/admin/structure"
+                href="/admin/roles"
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#540225] hover:bg-[#721c3b] text-white text-xs font-bold transition-all"
               >
-                Return to Academic Structure
+                Return to User Directory
               </Link>
             </div>
           </main>

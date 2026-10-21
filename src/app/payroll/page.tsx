@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { PayrollHeader } from '@/components/payroll/PayrollHeader';
@@ -39,6 +40,7 @@ import { PayrollSettings } from '@/types/database';
 import { CheckCircle2 } from 'lucide-react';
 
 export default function PayrollPage() {
+  const router = useRouter();
   const session = useSession();
   const [summary, setSummary] = useState<PayrollDisbursalSummary>(EMPTY_PAYROLL_DATA);
   const [settings, setSettings] = useState<PayrollSettings>(getDefaultPayrollSettings());
@@ -64,11 +66,72 @@ export default function PayrollPage() {
   const [isCashSlipsModalOpen, setIsCashSlipsModalOpen] = useState(false);
 
   const userPerms = (session.user?.custom_permissions || {}) as Record<string, boolean>;
+  const currentRole = session.user?.role || session.role;
+  const canViewFinance = session.hasPermission?.('can_view_finance') ?? false;
+  const canViewFinancePortal = currentRole === 'ACCOUNTANT' || session.isSuperAdmin || canViewFinance;
+
   const canManageCycles = session.hasPermission?.('can_lock_cycles') ?? false;
   const canViewCurrency = session.hasPermission?.('can_view_currency_settings') ?? false;
   const canEditCurrency = session.hasPermission?.('can_manage_currency') ?? false;
   const canExportPayroll = session.hasPermission?.('can_export_payroll') ?? false;
   const canViewAllDepartments = session.hasPermission?.('can_view_all_departments') ?? false;
+  const canExportCSV = session.hasPermission?.('can_export_csv') ?? false;
+  const canGenerateReport = session.hasPermission?.('can_generate_payroll_report') ?? false;
+  const canViewPaymentArchive = session.hasPermission?.('can_view_payment_archive') ?? false;
+
+  const getDefaultPortalForRole = (role: string | null | undefined): string => {
+    switch (role) {
+      case 'SUPER_ADMIN':
+      case 'IT_ADMIN':
+        return '/admin/roles';
+      case 'COORDINATOR':
+        return '/coordinator';
+      case 'HOD':
+        return '/hod';
+      case 'ACCOUNTANT':
+        return '/finance';
+      case 'DEAN':
+      case 'VICE_DEAN':
+      case 'TEACHER':
+        return '/teacher';
+      default:
+        return '/admin/roles';
+    }
+  };
+
+  // Immediate redirect back to default dashboard if user does not have permission to view Finance portal
+  useEffect(() => {
+    if (currentRole && !canViewFinancePortal && !isCurrencySettingsModalOpen && !isCycleSettingsModalOpen && !isReportModalOpen) {
+      router.replace(getDefaultPortalForRole(currentRole));
+    }
+  }, [currentRole, canViewFinancePortal, isCurrencySettingsModalOpen, isCycleSettingsModalOpen, isReportModalOpen, router]);
+
+  const handleCloseCurrencyModal = () => {
+    setIsCurrencySettingsModalOpen(false);
+    if (!canViewFinancePortal) {
+      router.replace(getDefaultPortalForRole(currentRole));
+    } else {
+      router.replace('/finance');
+    }
+  };
+
+  const handleCloseCycleModal = () => {
+    setIsCycleSettingsModalOpen(false);
+    if (!canViewFinancePortal) {
+      router.replace(getDefaultPortalForRole(currentRole));
+    } else {
+      router.replace('/finance');
+    }
+  };
+
+  const handleCloseReportModal = () => {
+    setIsReportModalOpen(false);
+    if (!canViewFinancePortal) {
+      router.replace(getDefaultPortalForRole(currentRole));
+    } else {
+      router.replace('/finance');
+    }
+  };
 
   // Toast notifications
   const [toastMessage, setToastMessage] = useState<{ title: string; desc: string } | null>(null);
@@ -81,6 +144,7 @@ export default function PayrollPage() {
   };
 
   const loadData = async (monthVal = selectedMonth) => {
+    if (currentRole && !canViewFinancePortal) return;
     try {
     const opts = {
         status: 'APPROVED' as const,
@@ -111,6 +175,22 @@ export default function PayrollPage() {
   useEffect(() => {
     loadData(selectedMonth);
   }, [selectedMonth]);
+
+  // Handle URL action triggers from sidebar navigation (?action=cycle | currency | report | export)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const action = params.get('action');
+    if (action === 'cycle' && canManageCycles) {
+      setIsCycleSettingsModalOpen(true);
+    } else if (action === 'currency' && canViewCurrency) {
+      setIsCurrencySettingsModalOpen(true);
+    } else if (action === 'report' && canGenerateReport) {
+      setIsReportModalOpen(true);
+    } else if (action === 'export' && canExportCSV) {
+      handleExportCSV();
+    }
+  }, [canManageCycles, canViewCurrency, canGenerateReport, canExportCSV]);
 
   // Filter departments based on canViewAllDepartments permission
   const effectiveDepartments = useMemo(() => {
@@ -254,14 +334,43 @@ export default function PayrollPage() {
     }
   };
 
+  // If unauthorized user lands on /finance, don't show the finance portal dashboard
+  if (currentRole && !canViewFinancePortal) {
+    return (
+      <div className="min-h-screen bg-[#f8f9ff]">
+        <CurrencySettingsModal
+          isOpen={isCurrencySettingsModalOpen}
+          onClose={handleCloseCurrencyModal}
+          exchangeRate={exchangeRate}
+          onSave={handleSaveCurrencySettings}
+          financeCanEditExchange={financeCanEditExchange}
+        />
+        <CycleSettingsModal
+          isOpen={isCycleSettingsModalOpen}
+          onClose={handleCloseCycleModal}
+          settings={settings}
+          onSave={handleSaveCycleSettings}
+        />
+        <PayrollReportModal
+          summary={{ ...summary, departments: effectiveDepartments }}
+          isOpen={isReportModalOpen && canGenerateReport}
+          onClose={handleCloseReportModal}
+          onExportCSV={handleExportCSV}
+          currency={currency}
+          exchangeRate={exchangeRate}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#f8f9ff]">
-      {/* Navigation Sidebar with Payroll & Finance highlighted in burgundy and relocated actions */}
+      {/* Navigation Sidebar with Payroll & Finance highlighted in burgundy */}
       <Sidebar
         activeItem="payroll"
-        onExportCSV={canExportPayroll ? handleExportCSV : undefined}
+        onExportCSV={canExportCSV ? handleExportCSV : undefined}
         onOpenCycleSettings={canManageCycles ? () => setIsCycleSettingsModalOpen(true) : undefined}
-        onGenerateReport={canExportPayroll ? () => setIsReportModalOpen(true) : undefined}
+        onGenerateReport={canGenerateReport ? () => setIsReportModalOpen(true) : undefined}
         onOpenCurrencySettings={canViewCurrency ? () => setIsCurrencySettingsModalOpen(true) : undefined}
       />
 
@@ -335,8 +444,8 @@ export default function PayrollPage() {
       {/* Report Modal */}
       <PayrollReportModal
         summary={{ ...summary, departments: effectiveDepartments }}
-        isOpen={isReportModalOpen && canExportPayroll}
-        onClose={() => setIsReportModalOpen(false)}
+        isOpen={isReportModalOpen && canGenerateReport}
+        onClose={handleCloseReportModal}
         onExportCSV={handleExportCSV}
         currency={currency}
         exchangeRate={exchangeRate}
@@ -345,7 +454,7 @@ export default function PayrollPage() {
       {/* Cycle Configuration & System Lock Modal */}
       <CycleSettingsModal
         isOpen={isCycleSettingsModalOpen}
-        onClose={() => setIsCycleSettingsModalOpen(false)}
+        onClose={handleCloseCycleModal}
         settings={settings}
         onSave={handleSaveCycleSettings}
       />
@@ -372,7 +481,7 @@ export default function PayrollPage() {
 
       <CurrencySettingsModal
         isOpen={isCurrencySettingsModalOpen}
-        onClose={() => setIsCurrencySettingsModalOpen(false)}
+        onClose={handleCloseCurrencyModal}
         exchangeRate={exchangeRate}
         onSave={handleSaveCurrencySettings}
         financeCanEditExchange={financeCanEditExchange}

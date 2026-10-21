@@ -132,7 +132,7 @@ function LoginContent() {
     if (role === 'SUPER_ADMIN') {
       window.location.href = '/admin/roles';
     } else if (role === 'IT_ADMIN') {
-      window.location.href = '/admin/structure';
+      window.location.href = '/admin/roles';
     } else if (role === 'COORDINATOR') {
       window.location.href = '/coordinator';
     } else if (role === 'HOD') {
@@ -202,7 +202,7 @@ function LoginContent() {
       if (userRecord.role === 'SUPER_ADMIN') {
         window.location.href = '/admin/roles';
       } else if (userRecord.role === 'IT_ADMIN') {
-        window.location.href = '/admin/structure';
+        window.location.href = '/admin/roles';
       } else if (userRecord.role === 'COORDINATOR') {
         window.location.href = '/coordinator';
       } else if (userRecord.role === 'HOD') {

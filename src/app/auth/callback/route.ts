@@ -87,7 +87,7 @@ export async function GET(request: NextRequest) {
         destination = '/admin/roles';
         break;
       case 'IT_ADMIN':
-        destination = '/admin/structure';
+        destination = '/admin/roles';
         break;
       case 'COORDINATOR':
         destination = '/coordinator';

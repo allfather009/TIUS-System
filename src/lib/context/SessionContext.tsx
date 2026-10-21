@@ -251,8 +251,32 @@ export function SessionProvider({
           setRolePermissions(mergeWithDefaultRolePermissions(json.data.role_permissions));
         }
       }
+
+      // Re-sync active user custom_permissions from Supabase
+      const targetUserId = isSimulating ? simulatedUser?.id : realUser?.id;
+      if (targetUserId && !targetUserId.startsWith('demo-') && !targetUserId.startsWith('u1111') && !targetUserId.startsWith('u8888')) {
+        const supabase = createClient();
+        const { data: dbUser } = await supabase
+          .from('users')
+          .select('custom_permissions')
+          .eq('id', targetUserId)
+          .maybeSingle();
+
+        if (dbUser) {
+          const freshPerms: Record<string, boolean> =
+            dbUser.custom_permissions && typeof dbUser.custom_permissions === 'object'
+              ? dbUser.custom_permissions
+              : {};
+          setCustomPermissions(freshPerms);
+          if (isSimulating && simulatedUser) {
+            setSimulatedUser((prev) => prev ? { ...prev, custom_permissions: freshPerms } : null);
+          } else {
+            setRealUser((prev) => ({ ...prev, custom_permissions: freshPerms }));
+          }
+        }
+      }
     } catch (err) {
-      console.error('Failed to refresh role permissions:', err);
+      console.error('Failed to refresh permissions:', err);
     }
   };
 
@@ -587,7 +611,7 @@ export function SessionProvider({
         // Navigate to simulated user's corresponding portal
         let dest = '/teacher';
         if (simData.role === 'SUPER_ADMIN') dest = '/admin/roles';
-        else if (simData.role === 'IT_ADMIN') dest = '/admin/structure';
+        else if (simData.role === 'IT_ADMIN') dest = '/admin/roles';
         else if (simData.role === 'COORDINATOR') dest = '/coordinator';
         else if (simData.role === 'TEACHER' || simData.role === 'DEAN' || simData.role === 'VICE_DEAN') dest = '/teacher';
         else if (simData.role === 'HOD') dest = '/hod';

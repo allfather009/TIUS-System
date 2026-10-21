@@ -39,8 +39,13 @@ export default function AcademicStructurePage() {
   const activeRole = role || 'TEACHER';
 
   const isSuper = isSuperAdmin || activeRole === 'SUPER_ADMIN' || user?.role === 'SUPER_ADMIN';
-  const isHod = activeRole === 'HOD' || user?.role === 'HOD';
-  const isAuthorized = isSuper || isHod || hasPermission?.('can_manage_structure') || user?.custom_permissions?.['can_manage_structure'] === true;
+  const isItAdmin = activeRole === 'IT_ADMIN' || user?.role === 'IT_ADMIN';
+  const canManageAll =
+    isSuper ||
+    hasPermission?.('can_manage_structure') ||
+    user?.custom_permissions?.['can_manage_structure'] === true;
+  const isHod = !canManageAll && (activeRole === 'HOD' || user?.role === 'HOD');
+  const isAuthorized = canManageAll || isHod;
 
   const [faculties, setFaculties] = useState<Faculty[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -108,7 +113,7 @@ export default function AcademicStructurePage() {
   }, [user]);
 
   const isDeptInJurisdiction = (dept: Department) => {
-    if (isSuper) return true;
+    if (canManageAll) return true;
     const idLower = (dept.id || '').toLowerCase();
     const nameLower = (dept.name || '').toLowerCase();
     const codeLower = (dept.code || '').toLowerCase();
@@ -133,7 +138,7 @@ export default function AcademicStructurePage() {
 
       setUsers(usersData || []);
 
-      if (isSuper) {
+      if (canManageAll) {
         setFaculties(data.faculties);
         setDepartments(data.departments);
         setStages(data.stages);
@@ -210,8 +215,8 @@ export default function AcademicStructurePage() {
     e.preventDefault();
     if (!addingTo) return;
 
-    if (!isSuper && (addingTo.type === 'faculty' || addingTo.type === 'department')) {
-      alert('Only Super Administrators can create faculties or departments.');
+    if (!canManageAll && (addingTo.type === 'faculty' || addingTo.type === 'department')) {
+      alert('Only Administrators can create faculties or departments.');
       return;
     }
 
@@ -248,8 +253,8 @@ export default function AcademicStructurePage() {
     e.preventDefault();
     if (!editingItem) return;
 
-    if (!isSuper && (editingItem.type === 'faculty' || editingItem.type === 'department')) {
-      alert('Only Super Administrators can edit faculties or departments.');
+    if (!canManageAll && (editingItem.type === 'faculty' || editingItem.type === 'department')) {
+      alert('Only Administrators can edit faculties or departments.');
       return;
     }
 
@@ -276,8 +281,8 @@ export default function AcademicStructurePage() {
   };
 
   const confirmDelete = (type: 'faculty' | 'department' | 'stage' | 'course', id: string, name: string) => {
-    if (!isSuper && (type === 'faculty' || type === 'department')) {
-      alert('Only Super Administrators can delete faculties or departments.');
+    if (!canManageAll && (type === 'faculty' || type === 'department')) {
+      alert('Only Administrators can delete faculties or departments.');
       return;
     }
     setDeleteConfirmation({ isOpen: true, type, id, name });
@@ -287,8 +292,8 @@ export default function AcademicStructurePage() {
     const { type, id } = deleteConfirmation;
     if (!type || !id) return;
 
-    if (!isSuper && (type === 'faculty' || type === 'department')) {
-      alert('Only Super Administrators can delete faculties or departments.');
+    if (!canManageAll && (type === 'faculty' || type === 'department')) {
+      alert('Only Administrators can delete faculties or departments.');
       return;
     }
     
@@ -478,9 +483,9 @@ export default function AcademicStructurePage() {
 
       <div className="pl-72">
         <Header
-          breadcrumbCategory={isHod && !isSuper ? 'Department Administration' : 'TIU Central Administration'}
+          breadcrumbCategory={isHod ? 'Department Administration' : 'TIU Central Administration'}
           breadcrumbPage="Academic Structure"
-          activeViewLabel={isHod && !isSuper ? 'Head of Department' : 'Super Admin'}
+          activeViewLabel={isHod ? 'Head of Department' : isSuper ? 'Super Admin' : isItAdmin ? 'IT Support Admin' : (user?.name || activeRole)}
         />
 
         <main className="w-full pt-20 pb-16 px-8">
@@ -491,14 +496,14 @@ export default function AcademicStructurePage() {
                   Academic Structure
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-500 max-w-3xl">
-                  {isHod && !isSuper
+                  {isHod
                     ? 'Manage courses and stages within your assigned departmental jurisdiction.'
                     : 'Manage the nested university hierarchy: Faculties > Departments > Stages > Courses.'}
                 </p>
               </div>
 
-              {/* Action restriction: Only SUPER_ADMIN can add faculties */}
-              {isSuper && (
+              {/* Action restriction: Administrators with canManageAll can add faculties */}
+              {canManageAll && (
                 <div className="flex items-center gap-2.5">
                   <button
                     type="button"
@@ -518,10 +523,10 @@ export default function AcademicStructurePage() {
               <div className="p-10 text-center bg-white border border-slate-200 rounded-2xl shadow-xs text-slate-500">
                 <Building2 className="w-10 h-10 mx-auto mb-3 text-slate-300" />
                 <h3 className="text-lg font-bold text-slate-700 mb-1">
-                  {isHod && !isSuper ? 'No Departments Assigned' : 'No Faculties Found'}
+                  {isHod ? 'No Departments Assigned' : 'No Faculties Found'}
                 </h3>
                 <p className="text-sm">
-                  {isHod && !isSuper
+                  {isHod
                     ? 'You currently have no departmental jurisdiction assigned. Please contact the Super Admin.'
                     : 'Click "Add Faculty" to start building your academic structure.'}
                 </p>
@@ -531,9 +536,9 @@ export default function AcademicStructurePage() {
                 <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
                   <h3 className="font-bold text-slate-700 text-sm flex items-center gap-2">
                     <Building2 className="w-4 h-4 text-slate-400" />
-                    {isHod && !isSuper ? 'Departmental Academic Hierarchy' : 'University Hierarchy'}
+                    {isHod ? 'Departmental Academic Hierarchy' : 'University Hierarchy'}
                   </h3>
-                  {isHod && !isSuper && departments.length > 0 && (
+                  {isHod && departments.length > 0 && (
                     <span className="text-xs font-medium text-slate-500">
                       Jurisdiction: <strong className="text-slate-800">{departments.map(d => d.name).join(' • ')}</strong>
                     </span>
@@ -566,8 +571,8 @@ export default function AcademicStructurePage() {
                               {facultyDepts.length} {facultyDepts.length === 1 ? 'Dept' : 'Depts'}
                             </span>
                             
-                            {/* Action restriction: Only SUPER_ADMIN can Add Dept, Edit or Delete Faculty */}
-                            {isSuper && (
+                            {/* Action restriction: Administrators with canManageAll can Add Dept, Edit or Delete Faculty */}
+                            {canManageAll && (
                               <div onClick={(e) => e.stopPropagation()}>
                                 <DropdownMenu>
                                   <DropdownMenuTrigger className="p-1.5 rounded-md hover:bg-slate-100 text-slate-500 transition-colors focus:outline-none">
@@ -641,7 +646,7 @@ export default function AcademicStructurePage() {
                                             </div>
                                           );
                                         }
-                                        return isSuper ? (
+                                        return canManageAll ? (
                                           <span className="text-[10px] text-slate-400 italic bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded">
                                             No HoD Assigned
                                           </span>
@@ -662,7 +667,7 @@ export default function AcademicStructurePage() {
                                             <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setAddingTo({ type: 'stage', parentId: dept.id }); setFormData({ name: '', code: '', level: 1, credits: 3 }); }}>
                                               <Plus className="w-3.5 h-3.5 text-blue-500 mr-2" /> Add Stage
                                             </DropdownMenuItem>
-                                            {isSuper && (
+                                            {canManageAll && (
                                               <>
                                                 <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleOpenAssignHod(dept); }}>
                                                   <UserCheck className="w-3.5 h-3.5 text-indigo-600 mr-2" /> Assign Head of Department

@@ -62,14 +62,25 @@ export async function GET() {
       );
     }
 
+    const mergedRolePerms: Record<string, Record<string, boolean>> = {};
+    for (const [r, perms] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
+      mergedRolePerms[r] = { ...perms };
+    }
+    if (data?.role_permissions && typeof data.role_permissions === 'object') {
+      for (const [r, perms] of Object.entries(data.role_permissions)) {
+        mergedRolePerms[r] = {
+          ...(mergedRolePerms[r] || {}),
+          ...(perms as Record<string, boolean>),
+        };
+      }
+    }
+
     return NextResponse.json(
       {
         success: true,
         data: {
           ...data,
-          role_permissions: data?.role_permissions && Object.keys(data.role_permissions).length > 0
-            ? data.role_permissions
-            : DEFAULT_ROLE_PERMISSIONS,
+          role_permissions: mergedRolePerms,
         },
       },
       { headers: NO_CACHE_HEADERS }

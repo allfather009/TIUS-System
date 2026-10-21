@@ -366,15 +366,23 @@ export default function AdminSettingsPage() {
     setUserPermsSaved(false);
   };
 
-  // Toggle user permission in Tab 2
-  // Toggle user permission in Tab 2 with immediate state update & auto-save to Supabase
+  // Toggle user permission in Tab 2 with role baseline awareness & auto-save to Supabase
   const handleToggleUserPerm = async (key: string) => {
     if (!selectedUser) return;
-    const currentVal = !!userPermissions[key];
-    const updatedUserPermissions = {
-      ...userPermissions,
-      [key]: !currentVal,
-    };
+    const isExplicit = typeof userPermissions[key] === 'boolean';
+    const userRole = (selectedUser.role as UserRole) || 'TEACHER';
+    const roleBaseline = rolePermissions[userRole]?.[key] ?? DEFAULT_ROLE_PERMISSIONS[userRole]?.[key] ?? false;
+    const currentEffective = isExplicit ? !!userPermissions[key] : roleBaseline;
+    const nextVal = !currentEffective;
+
+    const updatedUserPermissions = { ...userPermissions };
+    if (nextVal === roleBaseline) {
+      // If toggled value now matches role default, remove explicit override to keep JSON clean
+      delete updatedUserPermissions[key];
+    } else {
+      updatedUserPermissions[key] = nextVal;
+    }
+
     setUserPermissions(updatedUserPermissions);
     setUserPermsSaved(false);
     setIsSavingUserPerms(true);
@@ -395,7 +403,8 @@ export default function AdminSettingsPage() {
         setTimeout(() => setUserPermsSaved(false), 2500);
         await session.refreshPermissions();
         const permDef = SYSTEM_PERMISSIONS.find((p) => p.key === key);
-        showToast('Override Auto-Saved', `${permDef?.label || key} for ${selectedUser.name} is now ${!currentVal ? 'ENABLED' : 'DISABLED'}.`);
+        const actionLabel = nextVal === roleBaseline ? 'INHERITED FROM ROLE' : nextVal ? 'OVERRIDE: ENABLED' : 'OVERRIDE: DISABLED';
+        showToast('Override Saved', `${permDef?.label || key} for ${selectedUser.name} is now ${actionLabel}.`);
       } else {
         const errorMsg = json.error || 'Failed to update user permissions in database.';
         showToast('Database Error', errorMsg, true);
@@ -405,6 +414,37 @@ export default function AdminSettingsPage() {
       console.error('Save user perms error:', err);
       showToast('Error', err?.message || 'An unexpected error occurred.', true);
       setUserPermissions(userPermissions);
+    } finally {
+      setIsSavingUserPerms(false);
+    }
+  };
+
+  // Reset all overrides for selected user to inherit role defaults
+  const handleResetUserPerms = async () => {
+    if (!selectedUser) return;
+    setIsSavingUserPerms(true);
+    try {
+      const res = await fetch('/api/user-permissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: selectedUser.id,
+          custom_permissions: {},
+        }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setUserPermissions({});
+        setSelectedUser({ ...selectedUser, custom_permissions: {} });
+        setUserPermsSaved(true);
+        setTimeout(() => setUserPermsSaved(false), 2500);
+        await session.refreshPermissions();
+        showToast('Overrides Cleared', `Removed all individual overrides for ${selectedUser.name}. Now inheriting 100% from role (${selectedUser.role}).`);
+      } else {
+        showToast('Database Error', json.error || 'Failed to reset user overrides.', true);
+      }
+    } catch (err: any) {
+      showToast('Error', err?.message || 'An unexpected error occurred.', true);
     } finally {
       setIsSavingUserPerms(false);
     }
@@ -937,19 +977,34 @@ export default function AdminSettingsPage() {
                                   <p className="text-sm font-bold text-slate-800">{selectedUser.name}</p>
                                   <p className="text-[11px] text-slate-500">
                                     {selectedUser.email} • <span className="uppercase font-bold text-violet-600">{selectedUser.role}</span>
+                                    {Object.keys(userPermissions).length > 0 && (
+                                      <span className="ml-2 text-amber-600 font-semibold">({Object.keys(userPermissions).length} active override{Object.keys(userPermissions).length > 1 ? 's' : ''})</span>
+                                    )}
                                   </p>
                                 </div>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedUser(null);
-                                  setUserPermissions({});
-                                }}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={handleResetUserPerms}
+                                  disabled={isSavingUserPerms || Object.keys(userPermissions).length === 0}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold disabled:opacity-40 cursor-pointer shadow-2xs transition-all"
+                                  title="Clear all custom overrides so this user inherits their role default permissions"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                                  <span>Reset to Role Baseline</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedUser(null);
+                                    setUserPermissions({});
+                                  }}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
                             </div>
 
                             {/* Section 1: Admin Modules for user */}
@@ -958,28 +1013,57 @@ export default function AdminSettingsPage() {
                                 Admin Portal Modules Override
                               </p>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                                {adminModules.map((perm) => (
-                                  <div
-                                    key={perm.key}
-                                    className="flex items-center justify-between gap-4 px-4 py-3 rounded-lg bg-white border border-slate-100 hover:border-violet-200 transition-colors"
-                                  >
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-xs font-semibold text-slate-700">{perm.label}</p>
-                                      <p className="text-[10px] text-slate-400 leading-tight">{perm.description}</p>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleToggleUserPerm(perm.key)}
-                                      className="shrink-0 cursor-pointer"
+                                {adminModules.map((perm) => {
+                                  const isExplicit = typeof userPermissions[perm.key] === 'boolean';
+                                  const userRole = (selectedUser.role as UserRole) || 'TEACHER';
+                                  const roleBaseline = rolePermissions[userRole]?.[perm.key] ?? DEFAULT_ROLE_PERMISSIONS[userRole]?.[perm.key] ?? false;
+                                  const effectiveVal = isExplicit ? !!userPermissions[perm.key] : roleBaseline;
+
+                                  return (
+                                    <div
+                                      key={perm.key}
+                                      className={`flex items-start justify-between gap-4 p-3.5 rounded-xl border transition-all ${
+                                        effectiveVal
+                                          ? 'bg-white border-violet-200 shadow-2xs'
+                                          : 'bg-slate-50/70 border-slate-200'
+                                      }`}
                                     >
-                                      {userPermissions[perm.key] ? (
-                                        <ToggleRight className="w-8 h-8 text-emerald-500" />
-                                      ) : (
-                                        <ToggleLeft className="w-8 h-8 text-slate-300" />
-                                      )}
-                                    </button>
-                                  </div>
-                                ))}
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                          <p className="text-xs font-bold text-slate-800">{perm.label}</p>
+                                          {isExplicit ? (
+                                            effectiveVal ? (
+                                              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                                Override: Granted
+                                              </span>
+                                            ) : (
+                                              <span className="text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                                                Override: Revoked
+                                              </span>
+                                            )
+                                          ) : (
+                                            <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                                              Inherited ({roleBaseline ? 'Active' : 'Inactive'})
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-[11px] text-slate-500 leading-relaxed">{perm.description}</p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleUserPerm(perm.key)}
+                                        className="shrink-0 cursor-pointer pt-0.5"
+                                        aria-label={`Toggle override for ${perm.label}`}
+                                      >
+                                        {effectiveVal ? (
+                                          <ToggleRight className="w-8 h-8 text-emerald-500" />
+                                        ) : (
+                                          <ToggleLeft className="w-8 h-8 text-slate-300 hover:text-slate-400" />
+                                        )}
+                                      </button>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
 
@@ -989,28 +1073,57 @@ export default function AdminSettingsPage() {
                                 Operational &amp; Currency Privileges Override
                               </p>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                                {operationalPrivileges.map((perm) => (
-                                  <div
-                                    key={perm.key}
-                                    className="flex items-center justify-between gap-4 px-4 py-3 rounded-lg bg-white border border-slate-100 hover:border-violet-200 transition-colors"
-                                  >
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-xs font-semibold text-slate-700">{perm.label}</p>
-                                      <p className="text-[10px] text-slate-400 leading-tight">{perm.description}</p>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleToggleUserPerm(perm.key)}
-                                      className="shrink-0 cursor-pointer"
+                                {operationalPrivileges.map((perm) => {
+                                  const isExplicit = typeof userPermissions[perm.key] === 'boolean';
+                                  const userRole = (selectedUser.role as UserRole) || 'TEACHER';
+                                  const roleBaseline = rolePermissions[userRole]?.[perm.key] ?? DEFAULT_ROLE_PERMISSIONS[userRole]?.[perm.key] ?? false;
+                                  const effectiveVal = isExplicit ? !!userPermissions[perm.key] : roleBaseline;
+
+                                  return (
+                                    <div
+                                      key={perm.key}
+                                      className={`flex items-start justify-between gap-4 p-3.5 rounded-xl border transition-all ${
+                                        effectiveVal
+                                          ? 'bg-white border-violet-200 shadow-2xs'
+                                          : 'bg-slate-50/70 border-slate-200'
+                                      }`}
                                     >
-                                      {userPermissions[perm.key] ? (
-                                        <ToggleRight className="w-8 h-8 text-emerald-500" />
-                                      ) : (
-                                        <ToggleLeft className="w-8 h-8 text-slate-300" />
-                                      )}
-                                    </button>
-                                  </div>
-                                ))}
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                          <p className="text-xs font-bold text-slate-800">{perm.label}</p>
+                                          {isExplicit ? (
+                                            effectiveVal ? (
+                                              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                                Override: Granted
+                                              </span>
+                                            ) : (
+                                              <span className="text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                                                Override: Revoked
+                                              </span>
+                                            )
+                                          ) : (
+                                            <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                                              Inherited ({roleBaseline ? 'Active' : 'Inactive'})
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-[11px] text-slate-500 leading-relaxed">{perm.description}</p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleUserPerm(perm.key)}
+                                        className="shrink-0 cursor-pointer pt-0.5"
+                                        aria-label={`Toggle override for ${perm.label}`}
+                                      >
+                                        {effectiveVal ? (
+                                          <ToggleRight className="w-8 h-8 text-emerald-500" />
+                                        ) : (
+                                          <ToggleLeft className="w-8 h-8 text-slate-300 hover:text-slate-400" />
+                                        )}
+                                      </button>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
 

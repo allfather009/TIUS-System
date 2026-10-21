@@ -222,7 +222,9 @@ export default function SuperAdminRolesPage() {
   // --------------------------------------------------------------------------
   const isAuthorizedToManageRoles =
     activeRole === 'SUPER_ADMIN' ||
+    activeRole === 'IT_ADMIN' ||
     session.isSuperAdmin ||
+    session.user?.role === 'IT_ADMIN' ||
     session.hasPermission?.('can_manage_roles') ||
     session.user?.custom_permissions?.['can_manage_roles'] === true;
 
