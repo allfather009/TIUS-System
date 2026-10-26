@@ -247,12 +247,16 @@ function LoginContent() {
               {showPasswordForm && (
                 <form
                   onSubmit={handlePasswordLogin}
+                  autoComplete="off"
                   className="w-full bg-[#f8f9ff] p-4 rounded-2xl border border-slate-200 text-left space-y-3 animate-in fade-in zoom-in-95 duration-150"
                 >
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700">University Email</label>
+                    <label htmlFor="institutional_email" className="text-xs font-bold text-slate-700">University Email</label>
                     <input
+                      id="institutional_email"
+                      name="institutional_email"
                       type="email"
+                      autoComplete="username"
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
@@ -261,9 +265,12 @@ function LoginContent() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700">Password</label>
+                    <label htmlFor="institutional_password" className="text-xs font-bold text-slate-700">Password</label>
                     <input
+                      id="institutional_password"
+                      name="institutional_password"
                       type="password"
+                      autoComplete="new-password"
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
