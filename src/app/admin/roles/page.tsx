@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
@@ -10,19 +10,20 @@ import { UserTable } from '@/components/admin/UserTable';
 import { EditRoleModal } from '@/components/admin/EditRoleModal';
 
 import { AddUserModal } from '@/components/admin/AddUserModal';
-import { AuthorizationMatrix } from '@/components/admin/AuthorizationMatrix';
 import {
   getUsers,
   getDepartments,
   updateUserRole,
   createSingleUser,
   getMetrics,
+  getUniversityKpiMetrics,
   deleteUser,
   EMPTY_DASHBOARD_METRICS,
   BulkImportRow,
 } from '@/lib/services/userService';
 import { getSystemSettings } from '@/lib/services/systemSettingsService';
 import { UniversityUser, Department, UserRole, DashboardMetrics } from '@/types/database';
+import { createClient } from '@/lib/supabase/client';
 import {
   UserPlus,
   History,
@@ -71,6 +72,7 @@ export default function SuperAdminRolesPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [metrics, setMetrics] = useState<DashboardMetrics>(EMPTY_DASHBOARD_METRICS);
   const [loading, setLoading] = useState(true);
+  const [metricsLoading, setMetricsLoading] = useState(true);
 
   // Modals state
   const [selectedUserForEdit, setSelectedUserForEdit] = useState<UniversityUser | null>(null);
@@ -90,51 +92,53 @@ export default function SuperAdminRolesPage() {
     }, 4500);
   };
 
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = useCallback(async () => {
     try {
-      const [fetchedUsers, fetchedDepts, fetchedSystem] = await Promise.all([
+      const [fetchedUsers, fetchedDepts, fetchedSystem, kpis] = await Promise.all([
         getUsers(),
         getDepartments(),
         getSystemSettings(),
+        getUniversityKpiMetrics(),
       ]);
+      console.log('[Admin Roles] Loaded KPI data successfully:', kpis);
       setUsers(fetchedUsers);
       setDepartments(fetchedDepts);
-      setMetrics(getMetrics(fetchedUsers, { exchangeRate: fetchedSystem.exchange_rate / 100, baseCurrency: fetchedSystem.base_currency }));
+      setMetrics(
+        getMetrics(
+          fetchedUsers,
+          { exchangeRate: kpis.exchangeRate, baseCurrency: kpis.baseCurrency },
+          {
+            totalHours: kpis.totalHours,
+            estimatedCostUSD: kpis.estimatedCostUSD,
+            estimatedCostIQD: kpis.estimatedCostIQD,
+          }
+        )
+      );
     } catch (err) {
-      console.error('Error loading data:', err);
+      console.error('[Admin Roles] API / loadData Error:', err);
     } finally {
       setLoading(false);
+      setMetricsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    let ignore = false;
-    async function initialFetch() {
-      try {
-        const [fetchedUsers, fetchedDepts, fetchedSystem] = await Promise.all([
-          getUsers(),
-          getDepartments(),
-          getSystemSettings(),
-        ]);
-        if (!ignore) {
-          setUsers(fetchedUsers);
-          setDepartments(fetchedDepts);
-          setMetrics(getMetrics(fetchedUsers, { exchangeRate: fetchedSystem.exchange_rate / 100, baseCurrency: fetchedSystem.base_currency }));
-        }
-      } catch (err) {
-        console.error('Error loading data:', err);
-      } finally {
-        if (!ignore) {
-          setLoading(false);
-        }
-      }
-    }
-    initialFetch();
+    loadData();
+
+    // Supabase Realtime channel subscription:
+    // Only listen to physical tables — do NOT listen to requests (which is a PostgreSQL view)
+    const supabase = createClient();
+    const channel = supabase
+      .channel('realtime-admin-roles-kpis')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'timesheets' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'academic_rates' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_settings' }, () => loadData())
+      .subscribe();
+
     return () => {
-      ignore = true;
+      supabase.removeChannel(channel);
     };
-  }, []);
+  }, [loadData]);
 
   // Handle Edit Role
   const handleOpenEditUser = (user: UniversityUser) => {
@@ -150,7 +154,8 @@ export default function SuperAdminRolesPage() {
     hourlyRate?: number | null,
     departmentIds?: string[] | null,
     departmentNames?: string[] | null,
-    managedDepartmentIds?: string[] | null
+    managedDepartmentIds?: string[] | null,
+    maxWeeklyHours?: number | null
   ) => {
     const res = await updateUserRole(
       userId,
@@ -160,15 +165,25 @@ export default function SuperAdminRolesPage() {
       hourlyRate,
       departmentIds,
       departmentNames,
-      managedDepartmentIds
+      managedDepartmentIds,
+      maxWeeklyHours
     );
     if (res.success && res.user) {
       setUsers((prev) =>
         prev.map((u) => (u.id === userId ? { ...u, ...res.user } : u))
       );
       setMetrics((prev) =>
-        getMetrics(users.map((u) => (u.id === userId ? { ...u, ...res.user } : u)), { exchangeRate: prev.exchangeRate, baseCurrency: prev.baseCurrency })
+        getMetrics(
+          users.map((u) => (u.id === userId ? { ...u, ...res.user } : u)),
+          { exchangeRate: prev.exchangeRate, baseCurrency: prev.baseCurrency },
+          {
+            totalHours: prev.totalHours,
+            estimatedCostUSD: prev.estimatedCostUSD,
+            estimatedCostIQD: prev.estimatedCostIQD,
+          }
+        )
       );
+      loadData();
       showToast(
         'Staff Role Updated',
         `${res.user.name} is now assigned as ${newRole}${
@@ -189,7 +204,18 @@ export default function SuperAdminRolesPage() {
     const res = await createSingleUser(data);
     if (res.success && res.user) {
       setUsers((prev) => [res.user!, ...prev]);
-      setMetrics((prev) => getMetrics([res.user!, ...users], { exchangeRate: prev.exchangeRate, baseCurrency: prev.baseCurrency }));
+      setMetrics((prev) =>
+        getMetrics(
+          [res.user!, ...users],
+          { exchangeRate: prev.exchangeRate, baseCurrency: prev.baseCurrency },
+          {
+            totalHours: prev.totalHours,
+            estimatedCostUSD: prev.estimatedCostUSD,
+            estimatedCostIQD: prev.estimatedCostIQD,
+          }
+        )
+      );
+      loadData();
       showToast(
         'Faculty Member Added',
         `${res.user.name} has been provisioned and added to the directory.`
@@ -201,7 +227,18 @@ export default function SuperAdminRolesPage() {
     const res = await deleteUser(user.id);
     if (res.success) {
       setUsers((prev) => prev.filter((u) => u.id !== user.id));
-      setMetrics((prev) => getMetrics(users.filter((u) => u.id !== user.id), { exchangeRate: prev.exchangeRate, baseCurrency: prev.baseCurrency }));
+      setMetrics((prev) =>
+        getMetrics(
+          users.filter((u) => u.id !== user.id),
+          { exchangeRate: prev.exchangeRate, baseCurrency: prev.baseCurrency },
+          {
+            totalHours: prev.totalHours,
+            estimatedCostUSD: prev.estimatedCostUSD,
+            estimatedCostIQD: prev.estimatedCostIQD,
+          }
+        )
+      );
+      loadData();
       showToast(
         'User Deleted',
         `${user.name} has been permanently removed from the directory.`
@@ -342,7 +379,7 @@ export default function SuperAdminRolesPage() {
             </div>
 
             {/* Top Metric Cards */}
-            <MetricCards metrics={metrics} />
+            <MetricCards metrics={metrics} loading={metricsLoading} />
 
             {/* Role Counts Row */}
             <RoleCountsBar metrics={metrics} />
@@ -355,9 +392,6 @@ export default function SuperAdminRolesPage() {
               onDeleteUser={handleDeleteUser}
               onRefresh={loadData}
             />
-
-            {/* Authorization Matrix Guidelines */}
-            <AuthorizationMatrix />
           </div>
         </main>
       </div>

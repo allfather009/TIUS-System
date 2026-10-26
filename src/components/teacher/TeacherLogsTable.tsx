@@ -24,9 +24,9 @@ export function TeacherLogsTable({ logs }: TeacherLogsTableProps) {
     };
   }, [logs]);
 
-  // Filtered
+  // Filtered & Sorted (Newest on Top)
   const filteredLogs = useMemo(() => {
-    return logs.filter((log) => {
+    const list = logs.filter((log) => {
       // Tab filter
       if (activeTab === 'APPROVED' && log.status !== 'APPROVED') return false;
       if (activeTab === 'PENDING' && log.status !== 'PENDING' && log.status !== 'PENDING_HOD_APPROVAL') return false;
@@ -43,6 +43,12 @@ export function TeacherLogsTable({ logs }: TeacherLogsTableProps) {
         log.submissionRef.toLowerCase().includes(s) ||
         log.date.toLowerCase().includes(s)
       );
+    });
+
+    return [...list].sort((a, b) => {
+      const timeA = new Date(a.created_at || a.rawDate || a.date).getTime();
+      const timeB = new Date(b.created_at || b.rawDate || b.date).getTime();
+      return timeB - timeA; // Descending: newest on top
     });
   }, [logs, activeTab, search]);
 
@@ -186,17 +192,30 @@ export function TeacherLogsTable({ logs }: TeacherLogsTableProps) {
               paginatedLogs.map((log) => (
                 <tr key={log.id} className="hover:bg-[#f8f9ff] transition-colors">
                   {/* Course & Code */}
-                  <td className="py-4 px-6 max-w-[240px]">
+                  <td className="py-4 px-6 max-w-[260px]">
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         {getCourseBadge(log.courseCode, log.courseColor)}
                         <span className="font-bold text-[#0b1c30] truncate" title={log.deliverable}>
                           {log.deliverable}
                         </span>
+                        {log.isSpecialCondition && (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 text-amber-950 border border-amber-300 text-[10px] font-extrabold shadow-2xs"
+                            title={log.specialConditionReason ? `Special Exception Authorization: ${log.specialConditionReason}` : 'Submitted under authorized over-cap special condition'}
+                          >
+                            ⚠️ Special Condition
+                          </span>
+                        )}
                       </div>
                       <div className="text-[11px] text-slate-400 font-mono">
                         {log.submissionRef} • {log.sessionType || 'Session'}
                       </div>
+                      {log.isSpecialCondition && log.specialConditionReason && (
+                        <div className="text-[10px] text-amber-900 bg-amber-50/90 px-2 py-1 rounded-md border border-amber-200 leading-snug">
+                          <span className="font-bold">Over-Cap Justification:</span> {log.specialConditionReason}
+                        </div>
+                      )}
                     </div>
                   </td>
 

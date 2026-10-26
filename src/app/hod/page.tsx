@@ -108,10 +108,10 @@ export default function HodPage() {
   // Data Loading
   useEffect(() => {
     let ignore = false;
+    const supabase = createClient();
     async function initialFetch() {
       try {
         setIsLoading(true);
-        const supabase = createClient();
 
         // 1. Resolve current active HOD email from session/cookie/localStorage
         let activeEmail = session.user?.email || '';
@@ -236,8 +236,28 @@ export default function HodPage() {
     }
 
     initialFetch();
+
+    const channel = supabase
+      .channel('realtime-hod-dashboard')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'timesheets' },
+        (payload: any) => {
+          if (payload.eventType === 'INSERT' && payload.new) {
+            setTimesheets((prev) => {
+              const newTs = payload.new as Timesheet;
+              if (prev.some((t) => t.id === newTs.id)) return prev;
+              return [newTs, ...prev];
+            });
+          }
+          initialFetch();
+        }
+      )
+      .subscribe();
+
     return () => {
       ignore = true;
+      supabase.removeChannel(channel);
     };
   }, []);
 
@@ -258,15 +278,22 @@ export default function HodPage() {
   }, [departmentFaculty, selectedDeptId]);
 
   const scopedTimesheets = useMemo(() => {
-    if (selectedDeptId === 'ALL') return timesheets;
-    const targetDeptName = managedDepartments.find((d) => d.id === selectedDeptId)?.name;
-    return timesheets.filter((t) => {
-      if (t.department_id && t.department_id === selectedDeptId) return true;
-      if (targetDeptName && t.department && t.department.toLowerCase().includes(targetDeptName.toLowerCase())) {
-        return true;
-      }
-      if (t.teacher?.department_id === selectedDeptId) return true;
-      return false;
+    let list = timesheets;
+    if (selectedDeptId !== 'ALL') {
+      const targetDeptName = managedDepartments.find((d) => d.id === selectedDeptId)?.name;
+      list = timesheets.filter((t) => {
+        if (t.department_id && t.department_id === selectedDeptId) return true;
+        if (targetDeptName && t.department && t.department.toLowerCase().includes(targetDeptName.toLowerCase())) {
+          return true;
+        }
+        if (t.teacher?.department_id === selectedDeptId) return true;
+        return false;
+      });
+    }
+    return [...list].sort((a, b) => {
+      const timeA = new Date(a.created_at || a.date).getTime();
+      const timeB = new Date(b.created_at || b.date).getTime();
+      return timeB - timeA; // Descending: newest on top
     });
   }, [timesheets, selectedDeptId, managedDepartments]);
 
@@ -304,6 +331,8 @@ export default function HodPage() {
     hod_id: string;
     department?: string;
     department_id?: string;
+    is_special_condition?: boolean;
+    special_condition_reason?: string;
   }) => {
     const res = await createTimesheet({
       ...data,
@@ -319,9 +348,10 @@ export default function HodPage() {
         ...res.timesheet,
         teacher: teacherObj || null,
         submitted_by: { id: hodUser.id, name: hodUser.name, email: hodUser.email },
+        created_at: res.timesheet?.created_at || new Date().toISOString(),
       };
 
-      // Optimistic state update
+      // Optimistic state update: Prepend to the start of the list
       setTimesheets((prev) => [enrichedTimesheet, ...prev]);
       showToast(
         'Request Submitted to Coordinator',

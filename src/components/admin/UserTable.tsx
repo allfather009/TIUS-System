@@ -114,10 +114,52 @@ export function UserTable({
 
   // Pagination
   const totalPages = Math.ceil(filteredUsers.length / pageSize) || 1;
+
+  // Reset currentPage to 1 whenever search or filter options change
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [search, selectedDept, selectedRoleFilter, selectedStatus]);
+
   const paginatedUsers = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return filteredUsers.slice(start, start + pageSize);
   }, [filteredUsers, currentPage, pageSize]);
+
+  // Windowed pagination items with smart ellipsis
+  const paginationItems = useMemo(() => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+
+    const items: (number | string)[] = [];
+
+    if (currentPage <= 3) {
+      // Near beginning: 1, 2, 3, 4, '...', totalPages
+      for (let i = 1; i <= 4; i++) {
+        items.push(i);
+      }
+      items.push('...');
+      items.push(totalPages);
+    } else if (currentPage >= totalPages - 2) {
+      // Near end: 1, '...', totalPages - 3, totalPages - 2, totalPages - 1, totalPages
+      items.push(1);
+      items.push('...');
+      for (let i = totalPages - 3; i <= totalPages; i++) {
+        items.push(i);
+      }
+    } else {
+      // In middle: 1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages
+      items.push(1);
+      items.push('...');
+      items.push(currentPage - 1);
+      items.push(currentPage);
+      items.push(currentPage + 1);
+      items.push('...');
+      items.push(totalPages);
+    }
+
+    return items;
+  }, [currentPage, totalPages]);
 
   const getRoleBadge = (role: UserRole) => {
     switch (role) {
@@ -454,9 +496,16 @@ export function UserTable({
                             <span className="font-bold text-[#0b1c30] group-hover:text-[#540225] transition-colors truncate">
                               {user.name}
                             </span>
-                            <span className="text-[11px] text-slate-500 truncate">
-                              {user.academic_title || 'Lecturer'}
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[11px] text-slate-500 truncate">
+                                {user.academic_title || 'Lecturer'}
+                              </span>
+                              {['TEACHER', 'DEAN', 'VICE_DEAN', 'HOD'].includes(user.role) && (
+                                <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                  Cap: {user.max_weekly_hours != null ? user.max_weekly_hours : 8}h/wk
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -596,38 +645,50 @@ export function UserTable({
         {/* Pagination Bar */}
         <div className="p-4 px-6 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
           <div>
-            Showing {(currentPage - 1) * pageSize + 1} to{' '}
+            Showing {filteredUsers.length === 0 ? 0 : (currentPage - 1) * pageSize + 1} to{' '}
             {Math.min(currentPage * pageSize, filteredUsers.length)} of {filteredUsers.length}{' '}
             records
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap justify-center">
             <button
+              type="button"
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
-              className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition-colors font-medium cursor-pointer"
+              disabled={currentPage <= 1}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium cursor-pointer"
             >
               Previous
             </button>
 
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-              <button
-                key={page}
-                onClick={() => setCurrentPage(page)}
-                className={`w-8 h-8 rounded-xl font-bold transition-all cursor-pointer ${
-                  currentPage === page
-                    ? 'bg-[#540225] text-white shadow-2xs'
-                    : 'text-slate-600 hover:bg-slate-100 border border-transparent'
-                }`}
-              >
-                {page}
-              </button>
-            ))}
+            {paginationItems.map((item, idx) =>
+              item === '...' ? (
+                <span
+                  key={`ellipsis-${idx}`}
+                  className="w-8 h-8 flex items-center justify-center text-slate-400 font-bold select-none"
+                >
+                  …
+                </span>
+              ) : (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setCurrentPage(item as number)}
+                  className={`w-8 h-8 rounded-xl font-bold transition-all cursor-pointer ${
+                    currentPage === item
+                      ? 'bg-[#540225] text-white shadow-2xs'
+                      : 'text-slate-600 hover:bg-slate-100 border border-transparent'
+                  }`}
+                >
+                  {item}
+                </button>
+              )
+            )}
 
             <button
+              type="button"
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              disabled={currentPage === totalPages}
-              className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition-colors font-medium cursor-pointer"
+              disabled={currentPage >= totalPages}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium cursor-pointer"
             >
               Next
             </button>

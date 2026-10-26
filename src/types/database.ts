@@ -58,6 +58,7 @@ export interface UniversityUser {
   employment_type: EmploymentType;
   academic_title: string | null;
   hourly_rate: number;
+  max_weekly_hours?: number | null;
   staff_id?: string | null;
   avatar_url?: string | null;
   is_active?: boolean;
@@ -90,6 +91,8 @@ export interface Request {
   department?: string | null;
   department_id?: string | null;
   teacher?: UniversityUser | null;
+  is_special_condition?: boolean | null;
+  special_condition_reason?: string | null;
   created_at?: string;
   approved_at?: string | null;
   updated_at?: string;
@@ -117,6 +120,8 @@ export interface Timesheet {
   department_id?: string | null;
   teacher?: UniversityUser | null;
   hod?: UniversityUser | null;
+  is_special_condition?: boolean | null;
+  special_condition_reason?: string | null;
   created_at?: string;
   approved_at?: string | null;
   updated_at?: string;
@@ -157,6 +162,10 @@ export interface TeacherLog {
   submittedByName?: string;
   sessionType?: string;
   rejectionReason?: string;
+  isSpecialCondition?: boolean;
+  specialConditionReason?: string;
+  created_at?: string;
+  rawDate?: string;
 }
 
 export interface TeacherPortalData {
@@ -190,6 +199,7 @@ export interface TeacherPortalData {
   }>;
   logs: TeacherLog[];
   activeCycleName?: string;
+  weeklyCapHours?: number;
   systemSettings: SystemSettings;
 }
 
@@ -203,12 +213,14 @@ export const EMPTY_TEACHER_PORTAL_DATA: TeacherPortalData = {
     department_id: null,
     employment_type: 'FULL_TIME',
     hourly_rate: 0,
+    max_weekly_hours: 8.0,
     staff_id: '',
     avatar_url: null,
     is_active: true,
   },
   totalExtraHours: 0,
   monthlyCapHours: 40,
+  weeklyCapHours: 8.0,
   capacityFulfilledPercentage: 0,
   positiveTrendHours: 0,
   hourlyRate: 0,

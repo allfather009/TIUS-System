@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   Coins,
 } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
 import { useSession } from '@/lib/context/SessionContext';
 import { Department, SystemSettings, PayrollSettings } from '@/types/database';
 import { getDepartments } from '@/lib/services/userService';
@@ -51,6 +52,8 @@ interface CoordinatorRequest {
   notes?: string | null;
   department?: string | null;
   department_id?: string | null;
+  is_special_condition?: boolean | null;
+  special_condition_reason?: string | null;
   created_at?: string;
   approved_at?: string | null;
   teacher?: {
@@ -59,6 +62,7 @@ interface CoordinatorRequest {
     email: string;
     role: string;
     academic_title?: string | null;
+    max_weekly_hours?: number | null;
     department?: {
       id: string;
       name: string;
@@ -152,8 +156,32 @@ export default function CoordinatorPortalPage() {
     }
   }, []);
 
+  // Realtime subscription for requests/timesheets changes
   useEffect(() => {
     loadData();
+
+    const supabase = createClient();
+    const channel = supabase
+      .channel('realtime-requests')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'timesheets' },
+        (payload: any) => {
+          if (payload.eventType === 'INSERT' && payload.new) {
+            setRequests((prev) => {
+              const newReq = payload.new as CoordinatorRequest;
+              if (prev.some((r) => r.id === newReq.id)) return prev;
+              return [newReq, ...prev];
+            });
+          }
+          loadData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [loadData]);
 
   // Compute Counts
@@ -172,9 +200,9 @@ export default function CoordinatorPortalPage() {
     };
   }, [requests]);
 
-  // Filtered Requests
+  // Filtered & Sorted Requests (Newest on Top)
   const filteredRequests = useMemo(() => {
-    return requests.filter((req) => {
+    const list = requests.filter((req) => {
       // 1. Tab filter
       if (activeTab === 'PENDING' && req.status !== 'PENDING') return false;
       if (activeTab === 'APPROVED' && req.status !== 'APPROVED') return false;
@@ -208,6 +236,12 @@ export default function CoordinatorPortalPage() {
       }
 
       return true;
+    });
+
+    return [...list].sort((a, b) => {
+      const timeA = new Date(a.created_at || a.date).getTime();
+      const timeB = new Date(b.created_at || b.date).getTime();
+      return timeB - timeA; // Descending: newest on top
     });
   }, [requests, activeTab, selectedDeptId, searchQuery, departments]);
 
@@ -452,97 +486,97 @@ export default function CoordinatorPortalPage() {
                   </button>
                 )}
 
-                <button
-                  type="button"
-                  onClick={loadData}
-                  disabled={loading}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold border border-slate-200 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
-                  title="Reload incoming requests queue"
+                <div
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-slate-200/80 shadow-2xs text-xs font-semibold text-slate-600"
+                  title="Live data synchronization active"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${loading ? 'animate-spin' : ''}`} />
-                  <span>Refresh Queue</span>
-                </button>
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span className="tracking-tight text-slate-600">Live Sync</span>
+                </div>
               </div>
             </div>
 
             {/* KPI Metric Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Card 1: PENDING REVIEW */}
-              <div className="p-5 rounded-2xl bg-white border border-amber-200/70 shadow-xs flex items-center justify-between">
-                <div className="space-y-1">
-                  <span className="text-[11px] uppercase tracking-wider font-bold text-amber-900/70">
-                    PENDING REVIEW
+              <div className="bg-white rounded-xl border border-slate-200/90 shadow-sm p-5 flex items-center justify-between">
+                <div>
+                  <span className="text-slate-500 text-xs font-semibold tracking-wider uppercase block">
+                    Pending Review
                   </span>
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-headline text-2xl sm:text-3xl font-extrabold text-[#0b1c30]">
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-slate-900 text-3xl font-extrabold">
                       {counts.pending}
                     </span>
                     <span className="text-xs font-semibold text-amber-700 font-mono">
                       ({counts.pendingHours.toFixed(1)} hrs)
                     </span>
                   </div>
-                  <span className="text-[11px] text-slate-400 block">Awaiting Coordinator decision</span>
+                  <span className="text-slate-400 text-xs mt-1 block">Awaiting Coordinator decision</span>
                 </div>
-                <div className="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-100">
+                <div className="bg-amber-50 text-amber-600 border border-amber-200/60 p-2.5 rounded-lg shrink-0">
                   <Clock className="w-5 h-5 animate-pulse" />
                 </div>
               </div>
 
-              {/* Card 2: APPROVED REQUESTS */}
-              <div className="p-5 rounded-2xl bg-white border border-emerald-200/70 shadow-xs flex items-center justify-between">
-                <div className="space-y-1">
-                  <span className="text-[11px] uppercase tracking-wider font-bold text-emerald-900/70">
-                    APPROVED CLAIMS
+              {/* Card 2: APPROVED CLAIMS */}
+              <div className="bg-white rounded-xl border border-slate-200/90 shadow-sm p-5 flex items-center justify-between">
+                <div>
+                  <span className="text-slate-500 text-xs font-semibold tracking-wider uppercase block">
+                    Approved Claims
                   </span>
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-headline text-2xl sm:text-3xl font-extrabold text-[#0b1c30]">
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-slate-900 text-3xl font-extrabold">
                       {counts.approved}
                     </span>
                     <span className="text-xs font-semibold text-emerald-700 font-mono">
                       ({counts.approvedHours.toFixed(1)} hrs)
                     </span>
                   </div>
-                  <span className="text-[11px] text-slate-400 block">Passed to Finance for payroll</span>
+                  <span className="text-slate-400 text-xs mt-1 block">Passed to Finance for payroll</span>
                 </div>
-                <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
+                <div className="bg-emerald-50 text-emerald-600 border border-emerald-200/60 p-2.5 rounded-lg shrink-0">
                   <CheckCircle2 className="w-5 h-5" />
                 </div>
               </div>
 
               {/* Card 3: REJECTED CLAIMS */}
-              <div className="p-5 rounded-2xl bg-white border border-rose-200/70 shadow-xs flex items-center justify-between">
-                <div className="space-y-1">
-                  <span className="text-[11px] uppercase tracking-wider font-bold text-rose-900/70">
-                    REJECTED CLAIMS
+              <div className="bg-white rounded-xl border border-slate-200/90 shadow-sm p-5 flex items-center justify-between">
+                <div>
+                  <span className="text-slate-500 text-xs font-semibold tracking-wider uppercase block">
+                    Rejected Claims
                   </span>
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-headline text-2xl sm:text-3xl font-extrabold text-[#0b1c30]">
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-slate-900 text-3xl font-extrabold">
                       {counts.rejected}
                     </span>
                     <span className="text-xs text-rose-700 font-medium">declined</span>
                   </div>
-                  <span className="text-[11px] text-slate-400 block">Returned with rejection notes</span>
+                  <span className="text-slate-400 text-xs mt-1 block">Returned with rejection notes</span>
                 </div>
-                <div className="w-11 h-11 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100">
+                <div className="bg-rose-50 text-rose-600 border border-rose-200/60 p-2.5 rounded-lg shrink-0">
                   <XCircle className="w-5 h-5" />
                 </div>
               </div>
 
-              {/* Card 4: TOTAL IN QUEUE */}
-              <div className="p-5 rounded-2xl bg-white border border-slate-200/70 shadow-xs flex items-center justify-between">
-                <div className="space-y-1">
-                  <span className="text-[11px] uppercase tracking-wider font-bold text-slate-400">
-                    TOTAL SUBMISSIONS
+              {/* Card 4: TOTAL SUBMISSIONS */}
+              <div className="bg-white rounded-xl border border-slate-200/90 shadow-sm p-5 flex items-center justify-between">
+                <div>
+                  <span className="text-slate-500 text-xs font-semibold tracking-wider uppercase block">
+                    Total Submissions
                   </span>
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-headline text-2xl sm:text-3xl font-extrabold text-[#0b1c30]">
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-slate-900 text-3xl font-extrabold">
                       {counts.all}
                     </span>
                     <span className="text-xs text-slate-500 font-medium">total items</span>
                   </div>
-                  <span className="text-[11px] text-slate-400 block">Across all academic faculties</span>
+                  <span className="text-slate-400 text-xs mt-1 block">Across all academic faculties</span>
                 </div>
-                <div className="w-11 h-11 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
+                <div className="bg-stone-100 text-[#700c2f] border border-[#700c2f]/20 p-2.5 rounded-lg shrink-0">
                   <Building2 className="w-5 h-5" />
                 </div>
               </div>
@@ -801,7 +835,7 @@ export default function CoordinatorPortalPage() {
 
                             {/* Faculty Beneficiary */}
                             <td className="py-4 px-5">
-                              <div className="space-y-1">
+                              <div className="space-y-1.5">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="font-bold text-[#0b1c30] text-sm">
                                     {req.teacher?.name || 'Faculty Member'}
@@ -811,6 +845,14 @@ export default function CoordinatorPortalPage() {
                                       HoD Self-Submission
                                     </span>
                                   )}
+                                  {req.is_special_condition && (
+                                    <span
+                                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-amber-100 text-amber-950 border border-amber-300 text-[10px] font-extrabold shadow-2xs tracking-tight"
+                                      title={`Requested: ${Number(req.hours).toFixed(1)} hrs | Teacher Cap: ${req.teacher?.max_weekly_hours != null ? req.teacher.max_weekly_hours : 8} hrs`}
+                                    >
+                                      ⚠️ Over-Cap Special Request
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium">
                                   <span>{req.teacher?.academic_title || 'Lecturer'}</span>
@@ -818,7 +860,35 @@ export default function CoordinatorPortalPage() {
                                   <span className="font-mono text-[10px] uppercase px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">
                                     {req.teacher?.role || 'TEACHER'}
                                   </span>
+                                  {req.teacher?.max_weekly_hours != null && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="text-[10px] text-slate-500 font-mono">
+                                        Cap: {req.teacher.max_weekly_hours}h/wk
+                                      </span>
+                                    </>
+                                  )}
                                 </div>
+
+                                {/* Calculation Preview and HoD Justification Note */}
+                                {req.is_special_condition && (
+                                  <div className="p-2.5 rounded-xl bg-amber-50/90 border border-amber-200/90 space-y-1 text-xs">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-[10px] font-bold text-amber-950 uppercase tracking-wider">
+                                        Calculation Preview:
+                                      </span>
+                                      <span className="text-[11px] font-mono font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded">
+                                        Requested: {Number(req.hours).toFixed(1)} hrs | Teacher Cap: {req.teacher?.max_weekly_hours != null ? req.teacher.max_weekly_hours : 8} hrs
+                                      </span>
+                                    </div>
+                                    {req.special_condition_reason && (
+                                      <div className="text-[11px] text-amber-950 leading-snug pt-0.5">
+                                        <span className="font-bold text-amber-900">HoD Justification: </span>
+                                        <span className="italic">"{req.special_condition_reason}"</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             </td>
 
@@ -1054,6 +1124,25 @@ export default function CoordinatorPortalPage() {
                   {rejectionModal.request.hours} hrs • {rejectionModal.request.course_code || 'GEN'}
                 </span>
               </div>
+
+              {/* Special Condition Over-Cap Warning & Justification in Rejection Modal */}
+              {rejectionModal.request.is_special_condition && (
+                <div className="mt-2 p-3 rounded-xl bg-amber-50 border border-amber-200 space-y-1.5 text-xs">
+                  <div className="flex items-center gap-1.5 font-bold text-amber-950">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>⚠️ Over-Cap Special Request</span>
+                  </div>
+                  <div className="text-[11px] font-mono text-amber-900">
+                    Requested: {Number(rejectionModal.request.hours).toFixed(1)} hrs | Teacher Cap: {rejectionModal.request.teacher?.max_weekly_hours != null ? rejectionModal.request.teacher.max_weekly_hours : 8} hrs
+                  </div>
+                  {rejectionModal.request.special_condition_reason && (
+                    <div className="text-[11px] text-amber-950 bg-white/90 p-2 rounded-lg border border-amber-200">
+                      <strong className="text-amber-900">HoD Justification: </strong>
+                      <span className="italic">"{rejectionModal.request.special_condition_reason}"</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Rejection Reason Input */}

@@ -1,13 +1,14 @@
 'use client';
 
 import React from 'react';
-import { Calendar, GraduationCap } from 'lucide-react';
+import { Calendar, GraduationCap, Clock } from 'lucide-react';
 
 interface TeacherHeroProps {
   teacherName?: string;
   departmentFaculty?: string;
   semester?: string;
   selectedMonth?: string;
+  weeklyCap?: number;
 }
 
 export function TeacherHero({
@@ -15,6 +16,7 @@ export function TeacherHero({
   departmentFaculty = 'Department of Academic Studies',
   semester = 'Academic Year 2026–2027',
   selectedMonth = 'Active Cycle',
+  weeklyCap = 8.0,
 }: TeacherHeroProps) {
   return (
     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pt-2">
@@ -34,8 +36,12 @@ export function TeacherHero({
         </div>
       </div>
 
-      {/* Right: Active Cycle Display */}
+      {/* Right: Weekly Cap & Active Cycle Display */}
       <div className="flex items-center gap-3 flex-wrap">
+        <div className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-xs font-semibold shadow-2xs">
+          <Clock className="w-4 h-4 text-amber-700" />
+          <span>Weekly Hours Cap: <strong className="font-mono text-amber-950 font-bold">{weeklyCap.toFixed(1)}h/wk</strong></span>
+        </div>
         <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold shadow-2xs">
           <Calendar className="w-4 h-4 text-slate-500" />
           <span>{selectedMonth}</span>

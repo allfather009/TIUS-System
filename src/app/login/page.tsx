@@ -3,8 +3,6 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { useSession } from '@/lib/context/SessionContext';
-import { UserRole } from '@/types/database';
 import { ShieldAlert } from 'lucide-react';
 
 function LoginContent() {
@@ -13,8 +11,8 @@ function LoginContent() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [attemptedEmail, setAttemptedEmail] = useState<string | null>(null);
 
-  const [inputEmail, setInputEmail] = useState('');
-  const [inputPassword, setInputPassword] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPasswordForm, setShowPasswordForm] = useState(false);
 
   useEffect(() => {
@@ -72,100 +70,13 @@ function LoginContent() {
     }
   };
 
-  const session = useSession();
-
-  const handleDemoSignIn = async (
-    email: string,
-    role: string,
-    name: string,
-    custom_permissions?: Record<string, boolean>,
-    userId?: string,
-    academicTitle?: string,
-    departmentName?: string
-  ) => {
-    let resolvedPerms = custom_permissions;
-    let resolvedId = userId;
-    let resolvedTitle = academicTitle;
-    let resolvedDept = departmentName;
-
-    // If permissions or id not passed (e.g. from quick-test button), look up in DB to get real user data
-    if (!resolvedPerms || !resolvedId) {
-      try {
-        const supabase = createClient();
-        const { data: dbUser } = await supabase
-          .from('users')
-          .select('id, academic_title, custom_permissions, department:departments(name)')
-          .ilike('email', email)
-          .maybeSingle();
-
-        if (dbUser) {
-          if (!resolvedPerms && dbUser.custom_permissions) {
-            resolvedPerms = dbUser.custom_permissions;
-          }
-          if (!resolvedId && dbUser.id) {
-            resolvedId = dbUser.id;
-          }
-          if (!resolvedTitle && dbUser.academic_title) {
-            resolvedTitle = dbUser.academic_title;
-          }
-          if (!resolvedDept && (dbUser.department as any)?.name) {
-            resolvedDept = (dbUser.department as any)?.name;
-          }
-        }
-      } catch {
-        // fallback to defaults
-      }
-    }
-
-    const sessionData = JSON.stringify({
-      id: resolvedId || ('demo-' + role),
-      name,
-      email,
-      role,
-      roleTitle: resolvedTitle || role,
-      avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=e5eeff&color=0b1c30&bold=true`,
-      staffId: '',
-      departmentName: resolvedDept || '',
-      custom_permissions: resolvedPerms || {},
-      isSimulation: false,
-    });
-
-    document.cookie = `tius_session=${encodeURIComponent(sessionData)}; path=/; max-age=604800`;
-    try {
-      localStorage.setItem('tius_session_role', role);
-      localStorage.setItem('tius_session_email', email);
-      localStorage.setItem('tius_custom_permissions', JSON.stringify(resolvedPerms || {}));
-    } catch {
-      // ignore
-    }
-
-    // NOTE: Do NOT call session.setRole() here — it overwrites the cookie
-    // with DEFAULT_USERS template data (wrong id/email). The cookie is already
-    // correctly written above. window.location.href triggers a full reload
-    // which hydrates SessionContext from the correct cookie.
-
-    if (role === 'SUPER_ADMIN') {
-      window.location.href = '/admin/roles';
-    } else if (role === 'IT_ADMIN') {
-      window.location.href = '/admin/roles';
-    } else if (role === 'COORDINATOR') {
-      window.location.href = '/coordinator';
-    } else if (role === 'HOD') {
-      window.location.href = '/hod';
-    } else if (role === 'ACCOUNTANT') {
-      window.location.href = '/finance';
-    } else {
-      window.location.href = '/teacher';
-    }
-  };
-
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setErrorMessage(null);
 
     try {
-      const cleanEmail = inputEmail.trim().toLowerCase();
+      const cleanEmail = email.trim().toLowerCase();
       const supabase = createClient();
 
       const { data: userRecord, error: userErr } = await supabase
@@ -210,10 +121,6 @@ function LoginContent() {
         // ignore
       }
 
-      // NOTE: Do NOT call session.setRole() here — it overwrites the cookie
-      // with DEFAULT_USERS template data (wrong id/email). The cookie is already
-      // correctly written above with real user data from Supabase.
-
       if (userRecord.role === 'SUPER_ADMIN') {
         window.location.href = '/admin/roles';
       } else if (userRecord.role === 'IT_ADMIN') {
@@ -231,13 +138,6 @@ function LoginContent() {
       setErrorMessage(err instanceof Error ? err.message : 'Authentication failed.');
       setLoading(false);
     }
-  };
-
-  const handleSimulateUnauthorized = () => {
-    setAttemptedEmail('unauthorized.lecturer@tiu.edu.iq');
-    setErrorMessage(
-      'Access Denied: Your account is not authorized. Contact the Academic Coordinator.'
-    );
   };
 
   return (
@@ -354,9 +254,9 @@ function LoginContent() {
                     <input
                       type="email"
                       required
-                      value={inputEmail}
-                      onChange={(e) => setInputEmail(e.target.value)}
-                      placeholder="e.g. name@tiu.edu.iq"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="name.surname@tiu.edu.iq"
                       className="w-full h-9 px-3 rounded-xl bg-white border border-slate-200 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#721c3b]/30"
                     />
                   </div>
@@ -365,9 +265,9 @@ function LoginContent() {
                     <input
                       type="password"
                       required
-                      value={inputPassword}
-                      onChange={(e) => setInputPassword(e.target.value)}
-                      placeholder="Enter account password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
                       className="w-full h-9 px-3 rounded-xl bg-white border border-slate-200 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#721c3b]/30"
                     />
                   </div>
@@ -378,16 +278,6 @@ function LoginContent() {
                   >
                     {loading ? 'Authenticating...' : 'Sign In with Institutional Password'}
                   </button>
-
-                  <div className="pt-1 text-center">
-                    <button
-                      type="button"
-                      onClick={() => handleDemoSignIn('barez.hassan@tiu.edu.iq', 'SUPER_ADMIN', 'Barez Hassan')}
-                      className="text-[11px] font-semibold text-[#540225] hover:underline cursor-pointer"
-                    >
-                      ⚡ Quick Sign-In as Super Admin (Barez Hassan)
-                    </button>
-                  </div>
                 </form>
               )}
             </div>

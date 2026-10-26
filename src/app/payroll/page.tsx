@@ -172,8 +172,25 @@ export default function PayrollPage() {
     }
   };
 
+  // Realtime subscription for requests/timesheets changes so Finance updates instantly
   useEffect(() => {
     loadData(selectedMonth);
+
+    const supabase = createClient();
+    const channel = supabase
+      .channel('realtime-finance-requests')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'timesheets' },
+        () => {
+          loadData(selectedMonth);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [selectedMonth]);
 
   // Handle URL action triggers from sidebar navigation (?action=cycle | currency | report | export)

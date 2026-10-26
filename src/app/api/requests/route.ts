@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { isDateInLockedPayrollCycle } from '@/lib/services/payrollSettingsService';
+import { getWeekRange } from '@/lib/utils/weekRange';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -132,6 +133,66 @@ export async function POST(req: Request) {
       );
     }
 
+    // 4.5 Cumulative Weekly Extra Hours Cap Validation
+    // Calculate calendar week boundaries (Monday to Sunday)
+    const weekRange = getWeekRange(date);
+
+    // Fetch teacher's max weekly hours limit (default to 8.0 if unset)
+    const { data: teacherProfile } = await admin
+      .from('users')
+      .select('id, name, max_weekly_hours')
+      .eq('id', targetTeacherId)
+      .maybeSingle();
+
+    const teacherCap =
+      teacherProfile?.max_weekly_hours != null ? Number(teacherProfile.max_weekly_hours) : 8.0;
+
+    // Query non-rejected hours for this teacher in this calendar week
+    const { data: existingWeekRecords, error: weekRecordsError } = await admin
+      .from('timesheets')
+      .select('hours')
+      .eq('teacher_id', targetTeacherId)
+      .gte('date', weekRange.startDate)
+      .lte('date', weekRange.endDate)
+      .neq('status', 'REJECTED');
+
+    if (weekRecordsError) {
+      console.error('[API /api/requests] Error checking weekly tally:', weekRecordsError);
+    }
+
+    const existingWeeklySum = (existingWeekRecords || []).reduce(
+      (sum, item) => sum + Number(item.hours || 0),
+      0
+    );
+
+    const projectedTotal = existingWeeklySum + hours;
+    const isSpecialCondition = Boolean(body.is_special_condition);
+    const specialReason =
+      typeof body.special_condition_reason === 'string'
+        ? body.special_condition_reason.trim()
+        : '';
+
+    if (projectedTotal > teacherCap) {
+      if (!isSpecialCondition || !specialReason) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Weekly extra hours limit exceeded: Teacher has already logged ${existingWeeklySum} hrs for this calendar week (${weekRange.label}). Adding ${hours} hrs brings the cumulative total to ${projectedTotal} hrs, exceeding the ${teacherCap} hrs weekly cap. An authorized Special Exception and Justification Reason are mandatory to submit over-cap requests.`,
+            details: {
+              currentWeekLogged: existingWeeklySum,
+              newHours: hours,
+              projectedTotal,
+              maxWeeklyHours: teacherCap,
+              weekRange: weekRange.label,
+              startDate: weekRange.startDate,
+              endDate: weekRange.endDate,
+            },
+          },
+          { status: 400, headers: NO_CACHE_HEADERS }
+        );
+      }
+    }
+
     // 5. Construct record with status = 'PENDING'
     const courseCode = (body.course_code || 'GEN').trim().toUpperCase();
     const sessionType = body.session_type || 'Instructional Extra Session';
@@ -151,6 +212,8 @@ export async function POST(req: Request) {
       course_activity: courseActivity,
       department: body.department || null,
       department_id: body.department_id || null,
+      is_special_condition: Boolean(body.is_special_condition),
+      special_condition_reason: body.is_special_condition ? (body.special_condition_reason || null) : null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -371,6 +434,7 @@ export async function GET(req: Request) {
     let query = admin
       .from('timesheets')
       .select('*, teacher:users!timesheets_teacher_id_fkey(*, department:departments(*)), submitted_by:users!timesheets_submitted_by_id_fkey(id, name, email, role, academic_title)')
+      .order('created_at', { ascending: false })
       .order('date', { ascending: false });
 
     if (departmentId && departmentId !== 'ALL') {

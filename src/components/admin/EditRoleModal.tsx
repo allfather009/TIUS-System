@@ -33,7 +33,8 @@ interface EditRoleModalProps {
     hourlyRate?: number | null,
     departmentIds?: string[] | null,
     departmentNames?: string[] | null,
-    managedDepartmentIds?: string[] | null
+    managedDepartmentIds?: string[] | null,
+    maxWeeklyHours?: number | null
   ) => Promise<void>;
 }
 
@@ -49,6 +50,7 @@ export function EditRoleModal({
   const [selectedDeptIds, setSelectedDeptIds] = useState<string[]>([]);
   const [deptLimitWarning, setDeptLimitWarning] = useState<string | null>(null);
   const [academicTitle, setAcademicTitle] = useState<string>('Lecturer');
+  const [maxWeeklyHours, setMaxWeeklyHours] = useState<number>(8.0);
   const [rates, setRates] = useState<AcademicRate[]>([]);
   const [saving, setSaving] = useState(false);
   const [sysSettings, setSysSettings] = useState<SystemSettings | null>(null);
@@ -111,6 +113,7 @@ export function EditRoleModal({
         : [];
     setSelectedDeptIds(initialDeptIds);
     setAcademicTitle(user.academic_title || 'Lecturer');
+    setMaxWeeklyHours(user.max_weekly_hours != null ? Number(user.max_weekly_hours) : 8.0);
     setImageError(false);
   }
 
@@ -227,7 +230,8 @@ export function EditRoleModal({
         calculatedRate,
         ['TEACHER', 'HOD', 'DEAN', 'VICE_DEAN'].includes(selectedRole) ? finalDeptIds : null,
         ['TEACHER', 'HOD', 'DEAN', 'VICE_DEAN'].includes(selectedRole) ? deptNames : null,
-        finalManagedIds
+        finalManagedIds,
+        maxWeeklyHours
       );
       onClose();
     } catch (err) {
@@ -371,6 +375,36 @@ export function EditRoleModal({
               />
             </div>
           )}
+
+          {/* Max Weekly Extra Hours Cap Field */}
+          <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <span>Max Weekly Extra Hours Cap</span>
+                <span className="text-red-500">*</span>
+              </label>
+              <span className="text-xs font-bold text-[#540225] font-mono bg-pink-50 px-2.5 py-0.5 rounded-md border border-pink-200">
+                {Number(maxWeeklyHours || 0).toFixed(1)} hrs/wk
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-snug">
+              Maximum authorized weekly extra hours limit for this faculty member. Requests submitted beyond this threshold will require HoD over-cap special justification and Coordinator review.
+            </p>
+            <div className="relative">
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                max="60"
+                value={maxWeeklyHours}
+                onChange={(e) => setMaxWeeklyHours(parseFloat(e.target.value) || 0)}
+                className="w-full h-11 px-3.5 pr-16 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-800 focus:ring-2 focus:ring-[#721c3b]/30 focus:border-[#721c3b] focus:bg-white transition-all font-mono"
+              />
+              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
+                hours/wk
+              </span>
+            </div>
+          </div>
 
           {/* Dynamic Department Assignment */}
           {/* HOD: Multi-Department Selector (Max 2 departments) */}

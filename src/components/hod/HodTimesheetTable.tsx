@@ -40,9 +40,9 @@ export function HodTimesheetTable({
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
   const [selectedForDetails, setSelectedForDetails] = useState<Timesheet | null>(null);
 
-  // Filter timesheets
+  // Filter and sort timesheets (newest on top)
   const filtered = useMemo(() => {
-    return timesheets.filter((ts) => {
+    const list = timesheets.filter((ts) => {
       // Status filter
       if (statusFilter === 'PENDING') {
         if (ts.status !== 'PENDING' && ts.status !== 'PENDING_HOD_APPROVAL') return false;
@@ -77,6 +77,12 @@ export function HodTimesheetTable({
       }
 
       return true;
+    });
+
+    return [...list].sort((a, b) => {
+      const timeA = new Date(a.created_at || a.date).getTime();
+      const timeB = new Date(b.created_at || b.date).getTime();
+      return timeB - timeA; // Descending: newest on top
     });
   }, [timesheets, search, statusFilter]);
 

@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/client';
 import { Timesheet, UniversityUser } from '@/types/database';
 import { isDateInLockedPayrollCycle, getPayrollSettings } from './payrollSettingsService';
+import { getWeekRange } from '@/lib/utils/weekRange';
 
 /**
  * Fetch all active faculty members (teachers) in one or more departments from Supabase.
@@ -137,6 +138,7 @@ export async function getDepartmentTimesheets(
     let query = supabase
       .from('timesheets')
       .select('*, teacher:users!timesheets_teacher_id_fkey(*, department:departments(*)), submitted_by:users!timesheets_submitted_by_id_fkey(id, name, email)')
+      .order('created_at', { ascending: false })
       .order('date', { ascending: false });
 
     // Resolve teacher IDs for the given departments
@@ -201,6 +203,7 @@ export async function getPendingTeacherRequests(
       .from('timesheets')
       .select('*, teacher:users!timesheets_teacher_id_fkey(*, department:departments(*)), submitted_by:users!timesheets_submitted_by_id_fkey(id, name, email)')
       .in('status', ['PENDING', 'PENDING_HOD_APPROVAL'])
+      .order('created_at', { ascending: false })
       .order('date', { ascending: false });
 
     const fetchedTeachers = await getDepartmentTeachers(ids);
@@ -257,6 +260,8 @@ export async function createTimesheet(data: {
   submitted_by_id?: string;
   department?: string;
   department_id?: string;
+  is_special_condition?: boolean;
+  special_condition_reason?: string;
 }): Promise<{ success: boolean; timesheet?: Timesheet; request?: Timesheet; error?: string }> {
   // Validate against cycle lock
   const lockCheck = await isDateInLockedPayrollCycle(data.date);
@@ -268,6 +273,46 @@ export async function createTimesheet(data: {
   }
   try {
     const supabase = createClient();
+
+    // Cumulative Weekly Extra Hours Cap Validation
+    try {
+      const weekRange = getWeekRange(data.date);
+      const { data: teacherRow } = await supabase
+        .from('users')
+        .select('max_weekly_hours')
+        .eq('id', data.teacher_id)
+        .maybeSingle();
+
+      const teacherCap =
+        teacherRow?.max_weekly_hours != null ? Number(teacherRow.max_weekly_hours) : 8.0;
+
+      const { data: weekRecords } = await supabase
+        .from('timesheets')
+        .select('hours')
+        .eq('teacher_id', data.teacher_id)
+        .gte('date', weekRange.startDate)
+        .lte('date', weekRange.endDate)
+        .neq('status', 'REJECTED');
+
+      const existingWeeklySum = (weekRecords || []).reduce(
+        (sum, item) => sum + Number(item.hours || 0),
+        0
+      );
+
+      const projectedTotal = existingWeeklySum + Number(data.hours || 0);
+      const isSpecial = Boolean(data.is_special_condition);
+      const specialReason = (data.special_condition_reason || '').trim();
+
+      if (projectedTotal > teacherCap && (!isSpecial || !specialReason)) {
+        return {
+          success: false,
+          error: `Weekly extra hours limit exceeded: Teacher has already logged ${existingWeeklySum} hrs for ${weekRange.label}. Adding ${data.hours} hrs brings the total to ${projectedTotal} hrs, exceeding the ${teacherCap} hrs weekly limit. An authorized Special Exception and Justification Reason are mandatory.`,
+        };
+      }
+    } catch (capErr) {
+      console.error('[HOD Service] Weekly cap validation error:', capErr);
+    }
+
     const courseActivity = data.notes || `${data.course_code || 'GEN'} - ${data.session_type || 'Instructional Extra Session'}`;
     const submitterId = data.submitted_by_id || data.hod_id || data.teacher_id;
 
@@ -282,6 +327,8 @@ export async function createTimesheet(data: {
       session_type: data.session_type || 'Instructional Extra Session',
       notes: data.notes || '',
       course_activity: courseActivity,
+      is_special_condition: Boolean(data.is_special_condition),
+      special_condition_reason: data.is_special_condition ? (data.special_condition_reason || null) : null,
     };
 
     if (data.department) {

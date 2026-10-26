@@ -14,10 +14,12 @@ import {
   Layers,
   Calculator,
   Info,
+  AlertTriangle,
 } from 'lucide-react';
 import { UniversityUser } from '@/types/database';
 import { createClient } from '@/lib/supabase/client';
 import { CustomSelect, CustomSelectOption } from '@/components/ui/CustomSelect';
+import { getWeekRange } from '@/lib/utils/weekRange';
 
 interface ScopedCourse {
   id: string;
@@ -46,6 +48,8 @@ interface LogExtraHoursModalProps {
     hod_id: string;
     department?: string;
     department_id?: string;
+    is_special_condition?: boolean;
+    special_condition_reason?: string;
   }) => Promise<void>;
 }
 
@@ -108,7 +112,60 @@ export function LogExtraHoursModal({
   const [isLoadingCourses, setIsLoadingCourses] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Sync active department on open
+  // Dynamic Weekly Hours Tally & Cumulative Cap State
+  const chosenTeacherId = targetMode === 'self' ? targetHodId : selectedTeacherId;
+  const selectedTeacherObj = targetMode === 'self' ? currentHod : teachers.find((t) => t.id === chosenTeacherId);
+  const teacherWeeklyCap = selectedTeacherObj?.max_weekly_hours != null ? Number(selectedTeacherObj.max_weekly_hours) : 8.0;
+
+  const [currentWeekLogged, setCurrentWeekLogged] = useState<number>(0);
+  const [isLoadingWeekHours, setIsLoadingWeekHours] = useState<boolean>(false);
+  const [requestSpecialException, setRequestSpecialException] = useState<boolean>(false);
+  const [specialConditionReason, setSpecialConditionReason] = useState<string>('');
+
+  const weekRange = useMemo(() => getWeekRange(date), [date]);
+  const newHours = totalExtraHours;
+  const projectedTotal = Number((currentWeekLogged + Number(newHours || 0)).toFixed(1));
+  const exceedsCap = projectedTotal > teacherWeeklyCap;
+
+  // Live Weekly Calculation: Fetch existing logged hours for selected teacher & calendar week
+  useEffect(() => {
+    if (!chosenTeacherId || !date) return;
+    let isCancelled = false;
+    setIsLoadingWeekHours(true);
+
+    async function fetchWeeklyHours() {
+      try {
+        const { startDate, endDate } = getWeekRange(date);
+        const supabase = createClient();
+        const { data: existingWeekRecords, error } = await supabase
+          .from('timesheets')
+          .select('hours, status')
+          .eq('teacher_id', chosenTeacherId)
+          .gte('date', startDate)
+          .lte('date', endDate)
+          .neq('status', 'REJECTED');
+
+        if (!isCancelled && !error && existingWeekRecords) {
+          const logged = existingWeekRecords.reduce(
+            (sum, item) => sum + Number(item.hours || 0),
+            0
+          );
+          setCurrentWeekLogged(logged);
+        }
+      } catch (err) {
+        console.error('[SubmitModal] Error loading weekly tally:', err);
+      } finally {
+        if (!isCancelled) setIsLoadingWeekHours(false);
+      }
+    }
+
+    fetchWeeklyHours();
+    return () => {
+      isCancelled = true;
+    };
+  }, [chosenTeacherId, date]);
+
+  // Sync active department on open & reset exception state
   useEffect(() => {
     if (isOpen) {
       if (departmentName && userDepartments.includes(departmentName)) {
@@ -118,8 +175,16 @@ export function LogExtraHoursModal({
       }
       setSelectedTeacherId(targetHodId);
       setTargetMode('self');
+      setRequestSpecialException(false);
+      setSpecialConditionReason('');
     }
   }, [isOpen, departmentName, userDepartments, targetHodId]);
+
+  // Reset exception fields whenever teacher changes
+  useEffect(() => {
+    setRequestSpecialException(false);
+    setSpecialConditionReason('');
+  }, [chosenTeacherId]);
 
   const activeDept = targetDepartment || userDepartments[0] || departmentName;
 
@@ -309,6 +374,9 @@ export function LogExtraHoursModal({
         notes: justificationNotes,
         department: activeDept,
         department_id: activeDepartmentId || undefined,
+        is_special_condition: exceedsCap && requestSpecialException,
+        special_condition_reason:
+          exceedsCap && requestSpecialException ? specialConditionReason.trim() : undefined,
       });
 
       // Reset fields
@@ -317,6 +385,8 @@ export function LogExtraHoursModal({
       setCourseName('');
       setTheoreticalHours('2.0');
       setPracticalHours('1.0');
+      setRequestSpecialException(false);
+      setSpecialConditionReason('');
       onClose();
     } catch (err) {
       console.error('Error submitting extra hours request:', err);
@@ -603,9 +673,157 @@ export function LogExtraHoursModal({
                 </span>
               </div>
               <div className="text-sm font-extrabold text-[#540225] font-mono px-3 py-1 bg-pink-50 rounded-lg border border-pink-200">
-                {totalExtraHours.toFixed(1)} hrs
+                {newHours.toFixed(1)} hrs
               </div>
             </div>
+
+            {/* Clean Weekly Breakdown under the hours input */}
+            <div
+              className={`p-3 rounded-xl border text-xs transition-all ${
+                exceedsCap
+                  ? 'bg-amber-50/90 border-amber-300 text-amber-950'
+                  : 'bg-white border-slate-200 text-slate-700'
+              }`}
+            >
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Clock className={`w-3.5 h-3.5 ${exceedsCap ? 'text-amber-700' : 'text-[#540225]'}`} />
+                  <span className="font-semibold text-slate-800">
+                    Already logged this week: <span className="font-mono text-slate-900">{currentWeekLogged} hrs</span> | This request: <span className="font-mono text-slate-900">{newHours} hrs</span> | Total: <span className={`font-mono ${exceedsCap ? 'text-amber-800 font-extrabold' : 'text-slate-900'}`}>{projectedTotal} / {teacherWeeklyCap} hrs cap</span>
+                  </span>
+                </div>
+                {isLoadingWeekHours ? (
+                  <span className="text-[10px] text-slate-400 font-medium animate-pulse">Calculating...</span>
+                ) : (
+                  <span className="text-[10px] text-slate-500 font-medium">({weekRange.label})</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Live Weekly Hours Tally & Dynamic Cap Progress Indicator */}
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-50 to-blue-50/20 border border-slate-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-[#540225]" />
+                <span className="text-xs font-bold text-slate-800">Weekly Hours Tally</span>
+                <span className="text-[11px] font-semibold text-slate-500">
+                  ({weekRange.label})
+                </span>
+              </div>
+              {isLoadingWeekHours ? (
+                <span className="text-[10px] text-slate-400 font-medium animate-pulse">
+                  Querying calendar week...
+                </span>
+              ) : (
+                <span className="text-xs font-mono font-bold text-slate-700">
+                  Logged: {currentWeekLogged.toFixed(1)}h / Max: {teacherWeeklyCap.toFixed(1)}h
+                </span>
+              )}
+            </div>
+
+            {/* Clean Progress Indicator Bar */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-600 font-medium">
+                  {weekRange.label}: <strong className="text-slate-900">Currently logged {currentWeekLogged.toFixed(1)}h</strong> / Max allowed: <strong className="text-slate-900">{teacherWeeklyCap.toFixed(1)}h</strong>
+                </span>
+                <span className={`font-mono font-bold text-xs ${exceedsCap ? 'text-amber-700' : 'text-slate-700'}`}>
+                  + {newHours.toFixed(1)}h new = {projectedTotal.toFixed(1)}h
+                </span>
+              </div>
+
+              {/* Visual Progress Bar */}
+              <div className="w-full h-3 bg-slate-200/90 rounded-full overflow-hidden flex relative">
+                {/* Existing Logged Hours */}
+                <div
+                  className="h-full bg-slate-600 transition-all duration-300"
+                  style={{
+                    width: `${Math.min(100, (currentWeekLogged / Math.max(teacherWeeklyCap, projectedTotal, 1)) * 100)}%`,
+                  }}
+                  title={`Currently logged: ${currentWeekLogged.toFixed(1)}h`}
+                />
+                {/* New Requested Hours */}
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    exceedsCap ? 'bg-amber-500' : 'bg-[#540225]'
+                  }`}
+                  style={{
+                    width: `${Math.min(
+                      100 - (currentWeekLogged / Math.max(teacherWeeklyCap, projectedTotal, 1)) * 100,
+                      (newHours / Math.max(teacherWeeklyCap, projectedTotal, 1)) * 100
+                    )}%`,
+                  }}
+                  title={`This request: ${newHours.toFixed(1)}h`}
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                <span>0.0h</span>
+                <span className="font-semibold text-slate-600">Authorized Cap: {teacherWeeklyCap.toFixed(1)}h/wk</span>
+                <span>{Math.max(teacherWeeklyCap, projectedTotal).toFixed(1)}h</span>
+              </div>
+            </div>
+
+            {/* Cap Exceeded Warning Banner & Special Condition Authorization */}
+            {exceedsCap && (
+              <div className="mt-3 p-4 rounded-xl bg-amber-50 border border-amber-300 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-bold text-amber-950">
+                      This request will bring the weekly total to {projectedTotal} hrs, exceeding the {teacherWeeklyCap} hrs weekly limit.
+                    </p>
+                    <p className="text-[11px] text-amber-800 leading-snug">
+                      Already logged this week: {currentWeekLogged} hrs | This request: {newHours} hrs | Total: {projectedTotal} / {teacherWeeklyCap} hrs cap. Standard submission is blocked unless an authorized special condition override is provided.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Checkbox: Request Special Exception */}
+                <div className="pt-2 border-t border-amber-200/80">
+                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={requestSpecialException}
+                      onChange={(e) => setRequestSpecialException(e.target.checked)}
+                      className="w-4 h-4 mt-0.5 rounded border-amber-400 text-[#540225] focus:ring-[#721c3b]/30 cursor-pointer"
+                    />
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-bold text-amber-950">
+                        Request Special Exception / Over-Cap Authorization
+                      </span>
+                      <p className="text-[11px] text-amber-800">
+                        Check this box to submit this request under institutional special condition authorization for Academic Coordinator review.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Mandatory Justification Textarea when Checkbox is ticked */}
+                {requestSpecialException && (
+                  <div className="pt-2 space-y-1.5 animate-in fade-in duration-150">
+                    <label className="text-xs font-bold text-amber-950 flex items-center justify-between">
+                      <span>Special Condition Justification (e.g., Coordinator/Dean in-person authorization)</span>
+                      <span className="text-red-600 font-bold text-[10px]">Mandatory *</span>
+                    </label>
+                    <textarea
+                      rows={2}
+                      required
+                      value={specialConditionReason}
+                      onChange={(e) => setSpecialConditionReason(e.target.value)}
+                      placeholder="Specify reason for over-cap exception (e.g., Authorized in-person by Dean / Coordinator for urgent lab preparation)..."
+                      className="w-full p-2.5 rounded-xl bg-white border border-amber-300 text-xs text-slate-800 placeholder:text-amber-700/60 focus:outline-none focus:ring-2 focus:ring-[#721c3b]/30 focus:border-[#540225] transition-all resize-none shadow-2xs font-medium"
+                    />
+                    {specialConditionReason.trim().length === 0 && (
+                      <p className="text-[10px] text-red-600 font-semibold">
+                        * Please type the justification reason above to unlock request submission.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Section 4: Justification / Notes */}
@@ -643,13 +861,23 @@ export function LogExtraHoursModal({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || totalExtraHours <= 0 || !courseCode}
+              disabled={
+                isSubmitting ||
+                newHours <= 0 ||
+                !courseCode ||
+                (exceedsCap && (!requestSpecialException || specialConditionReason.trim().length === 0))
+              }
               className="px-6 py-2.5 rounded-xl bg-[#540225] hover:bg-[#721c3b] text-white text-xs font-bold transition-all shadow-md cursor-pointer flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {isSubmitting ? (
                 <>
                   <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                   <span>Submitting to Coordinator...</span>
+                </>
+              ) : exceedsCap && requestSpecialException ? (
+                <>
+                  <Check className="w-4 h-4" />
+                  <span>Submit Special Exception Request</span>
                 </>
               ) : (
                 <>

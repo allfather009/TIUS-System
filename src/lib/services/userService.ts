@@ -65,7 +65,8 @@ export async function updateUserRole(
   hourlyRate?: number | null,
   departmentIds?: string[] | null,
   departmentNames?: string[] | null,
-  managedDepartmentIds?: string[] | null
+  managedDepartmentIds?: string[] | null,
+  maxWeeklyHours?: number | null
 ): Promise<{ success: boolean; error?: string; user?: UniversityUser }> {
   try {
     const supabase = createClient();
@@ -119,6 +120,9 @@ export async function updateUserRole(
     }
     if (hourlyRate !== undefined && hourlyRate !== null) {
       updatePayload.hourly_rate = hourlyRate;
+    }
+    if (maxWeeklyHours !== undefined) {
+      updatePayload.max_weekly_hours = maxWeeklyHours != null ? Number(maxWeeklyHours) : 8.0;
     }
 
     const { data, error } = await supabase
@@ -178,6 +182,7 @@ export async function updateUserRole(
           department: resolvedDeptId !== undefined ? targetDept : u.department,
           academic_title: academicTitle !== undefined ? (academicTitle || null) : (u.academic_title ?? null),
           hourly_rate: (hourlyRate !== undefined && hourlyRate !== null) ? hourlyRate : u.hourly_rate,
+          max_weekly_hours: maxWeeklyHours !== undefined ? (maxWeeklyHours != null ? Number(maxWeeklyHours) : 8.0) : u.max_weekly_hours,
           updated_at: new Date().toISOString(),
         };
       }
@@ -518,7 +523,20 @@ export const EMPTY_DASHBOARD_METRICS: DashboardMetrics = {
   teacherCount: 0,
 };
 
-export function getMetrics(users: UniversityUser[], sys?: { exchangeRate: number; baseCurrency?: 'USD' | 'IQD' }): DashboardMetrics {
+export interface UniversityKpiResult {
+  totalHours: number;
+  estimatedCostUSD: number;
+  estimatedCostIQD: number;
+  exchangeRate: number;
+  baseCurrency: 'USD' | 'IQD';
+  approvedCount: number;
+}
+
+export function getMetrics(
+  users: UniversityUser[],
+  sys?: { exchangeRate: number; baseCurrency?: 'USD' | 'IQD' },
+  kpis?: { totalHours?: number; estimatedCostUSD?: number; estimatedCostIQD?: number }
+): DashboardMetrics {
   const staff = users.filter((u) => u.role !== 'SUPER_ADMIN');
   const coordinators = staff.filter((u) => u.role === 'COORDINATOR').length;
   const hods = staff.filter((u) => u.role === 'HOD').length;
@@ -533,8 +551,118 @@ export function getMetrics(users: UniversityUser[], sys?: { exchangeRate: number
     accountantCount: accountants,
     teacherCount: teachers,
     baseCurrency: sys?.baseCurrency ?? 'IQD',
-    exchangeRate: sys?.exchangeRate ?? 1500,
+    exchangeRate: sys?.exchangeRate ?? 150000,
+    totalHours: kpis?.totalHours ?? 0,
+    estimatedCostUSD: kpis?.estimatedCostUSD ?? 0,
+    estimatedCostIQD: kpis?.estimatedCostIQD ?? 0,
   };
+}
+
+export async function getUniversityKpiMetrics(
+  usersList?: UniversityUser[]
+): Promise<UniversityKpiResult> {
+  // 1. Try server API route first if in browser
+  if (typeof window !== 'undefined') {
+    try {
+      const res = await fetch('/api/admin/metrics', { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data) {
+          return json.data as UniversityKpiResult;
+        }
+        console.error('[userService] /api/admin/metrics returned non-success:', json);
+      } else {
+        console.error('[userService] /api/admin/metrics HTTP error:', res.status, res.statusText);
+      }
+    } catch (fetchErr) {
+      console.error('[userService] Error fetching /api/admin/metrics:', fetchErr);
+    }
+  }
+
+  // 2. Direct Supabase fallback calculation (e.g. server-side or if endpoint is unreachable)
+  try {
+    const supabase = createClient();
+    const [timesheetsRes, rates, systemSettings, usersRes] = await Promise.all([
+      supabase.from('timesheets').select('*'),
+      getAcademicRates(),
+      getSystemSettings(),
+      usersList && usersList.length > 0 ? Promise.resolve(usersList) : getUsers(),
+    ]);
+
+    if (timesheetsRes.error) {
+      console.error('[userService] Error fetching timesheets in fallback:', timesheetsRes.error);
+    }
+
+    const timesheets = timesheetsRes.data || [];
+    const approvedTimesheets = timesheets.filter((t) => {
+      const s = String(t.status || '').toUpperCase();
+      return s === 'APPROVED' || s === 'PAID' || s.includes('APPROVED');
+    });
+
+    const userMap = new Map<string, UniversityUser>();
+    (usersRes || []).forEach((u) => userMap.set(u.id, u));
+
+    const rawExchangeRate = Number(systemSettings?.exchange_rate);
+    const exchangeRatePerUSD =
+      rawExchangeRate && rawExchangeRate >= 10000 ? rawExchangeRate / 100 : rawExchangeRate || 1500;
+    const baseCurrency = (systemSettings?.base_currency || 'IQD') as 'USD' | 'IQD';
+
+    let totalHours = 0;
+    let totalCostUSD = 0;
+    let totalCostIQD = 0;
+
+    for (const ts of approvedTimesheets) {
+      const hours = Number(ts.hours) || 0;
+      totalHours += hours;
+
+      const teacher = ts.teacher_id ? userMap.get(ts.teacher_id) : undefined;
+      const title = teacher?.academic_title || teacher?.role || '';
+
+      let rateUSD = 0;
+      const matchedRate = rates.find(
+        (r) => r.title && title && r.title.toLowerCase().trim() === title.toLowerCase().trim()
+      );
+
+      if (matchedRate && Number((matchedRate as any).hourly_rate_usd ?? matchedRate.hourly_rate) > 0) {
+        rateUSD = Number((matchedRate as any).hourly_rate_usd ?? matchedRate.hourly_rate);
+      } else if (title) {
+        rateUSD = getRateForTitle(title, rates);
+      }
+
+      if (!rateUSD || isNaN(rateUSD) || rateUSD <= 0) {
+        if (teacher?.hourly_rate && Number(teacher.hourly_rate) > 0) {
+          rateUSD = Number(teacher.hourly_rate);
+        } else {
+          rateUSD = 45.0;
+        }
+      }
+
+      const costUSD = hours * rateUSD;
+      const costIQD = costUSD * exchangeRatePerUSD;
+
+      totalCostUSD += costUSD;
+      totalCostIQD += costIQD;
+    }
+
+    return {
+      totalHours,
+      estimatedCostUSD: totalCostUSD,
+      estimatedCostIQD: totalCostIQD,
+      exchangeRate: rawExchangeRate || 150000,
+      baseCurrency,
+      approvedCount: approvedTimesheets.length,
+    };
+  } catch (err) {
+    console.error('[userService] Error calculating university KPI metrics:', err);
+    return {
+      totalHours: 0,
+      estimatedCostUSD: 0,
+      estimatedCostIQD: 0,
+      exchangeRate: 150000,
+      baseCurrency: 'IQD',
+      approvedCount: 0,
+    };
+  }
 }
 
 function isTimesheetInActiveCycle(
@@ -631,6 +759,7 @@ export async function getTeacherPortalData(teacherIdentifier?: string): Promise<
         department_rel:departments(id, name, code)
       `)
       .eq('teacher_id', userRec.id)
+      .order('created_at', { ascending: false })
       .order('date', { ascending: false });
 
     if (!error && timesheets && timesheets.length > 0) {
@@ -679,6 +808,10 @@ export async function getTeacherPortalData(teacherIdentifier?: string): Promise<
           submittedByName,
           sessionType: (ts.session_type as string) || 'Instructional Extra Session',
           rejectionReason,
+          isSpecialCondition: Boolean(ts.is_special_condition),
+          specialConditionReason: (ts.special_condition_reason as string) || undefined,
+          created_at: (ts.created_at as string) || undefined,
+          rawDate: (ts.date as string) || undefined,
         };
       });
 
@@ -732,6 +865,7 @@ export async function getTeacherPortalData(teacherIdentifier?: string): Promise<
 
       const monthlyCap = 40;
       const capacityFulfilled = Math.min(Math.round((totalHours / monthlyCap) * 100), 100);
+      const weeklyCap = currentTeacher.max_weekly_hours != null ? Number(currentTeacher.max_weekly_hours) : 8.0;
 
       return {
         ...EMPTY_TEACHER_PORTAL_DATA,
@@ -739,6 +873,7 @@ export async function getTeacherPortalData(teacherIdentifier?: string): Promise<
         hourlyRate,
         totalExtraHours: totalHours,
         monthlyCapHours: monthlyCap,
+        weeklyCapHours: weeklyCap,
         capacityFulfilledPercentage: capacityFulfilled,
         estimatedPayout: totalPayout,
         grossAmount: totalPayout,
@@ -755,6 +890,7 @@ export async function getTeacherPortalData(teacherIdentifier?: string): Promise<
       ...EMPTY_TEACHER_PORTAL_DATA,
       teacher: currentTeacher,
       hourlyRate: currentTeacher.hourly_rate || 40.0,
+      weeklyCapHours: currentTeacher.max_weekly_hours != null ? Number(currentTeacher.max_weekly_hours) : 8.0,
       departmentHod,
       activeCycleName,
       systemSettings,

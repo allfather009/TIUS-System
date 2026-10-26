@@ -84,6 +84,10 @@ export async function getPayrollDisbursalSummary(
       query = query.lte('date', filterEndDate);
     }
 
+    query = query
+      .order('created_at', { ascending: false })
+      .order('date', { ascending: false });
+
     const [timesheetsRes, academicRatesRes] = await Promise.all([
       query,
       supabase.from('academic_rates').select('title, hourly_rate, is_active'),
@@ -236,6 +240,22 @@ export async function getPayrollDisbursalSummary(
 
       deptMap.forEach((dept) => {
         const rows = Array.from(dept.teacherRows.values());
+        // Sort individual timesheet breakdown entries newest-first
+        rows.forEach((r) => {
+          r.timesheetEntries.sort((a, b) => {
+            const timeA = new Date(a.createdAt || a.date).getTime();
+            const timeB = new Date(b.createdAt || b.date).getTime();
+            return timeB - timeA;
+          });
+        });
+
+        // Sort faculty rows by newest entry
+        rows.sort((a, b) => {
+          const timeA = new Date(a.requestedAt || a.approvedAt || '').getTime();
+          const timeB = new Date(b.requestedAt || b.approvedAt || '').getTime();
+          return timeB - timeA;
+        });
+
         const totalDeptHours = rows.reduce((acc, r) => acc + r.billedHours, 0);
         const subtotalGross = rows.reduce((acc, r) => acc + r.calculatedGross, 0);
         totalGross += subtotalGross;

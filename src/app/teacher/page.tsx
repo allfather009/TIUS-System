@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { TeacherHero } from '@/components/teacher/TeacherHero';
@@ -20,6 +20,7 @@ import {
 import { TeacherPortalData, EMPTY_TEACHER_PORTAL_DATA, SystemSettings, PayrollSettings } from '@/types/database';
 import { getPayrollSettings, updatePayrollSettings } from '@/lib/services/payrollSettingsService';
 import { CheckCircle2, Info } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
 
 import { useRouter } from 'next/navigation';
 import { useSession } from '@/lib/context/SessionContext';
@@ -49,51 +50,68 @@ export default function TeacherPortalPage() {
     }
   }, [session.isSuperAdmin, session.role, session.isSimulating, session.user?.isSimulation, router]);
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        let activeIdentifier = session.user?.id || session.user?.email || '';
-        if (!activeIdentifier && typeof window !== 'undefined') {
-          const simMatch = document.cookie.match(/tius_simulated_user=([^;]+)/);
-          if (simMatch) {
-            try {
-              const decoded = simMatch[1].includes('%') ? decodeURIComponent(simMatch[1]) : simMatch[1];
-              const parsed = JSON.parse(decoded);
-              if (parsed?.id) activeIdentifier = parsed.id;
-              else if (parsed?.email) activeIdentifier = parsed.email;
-            } catch {}
-          }
-          if (!activeIdentifier) {
-            const storedEmail = localStorage.getItem('tius_session_email');
-            if (storedEmail) {
-              activeIdentifier = storedEmail;
-            } else {
-              const cookieMatch = document.cookie.match(/tius_session=([^;]+)/);
-              if (cookieMatch) {
-                try {
-                  const decoded = cookieMatch[1].includes('%') ? decodeURIComponent(cookieMatch[1]) : cookieMatch[1];
-                  const parsed = JSON.parse(decoded);
-                  if (parsed?.id) activeIdentifier = parsed.id;
-                  else if (parsed?.email) activeIdentifier = parsed.email;
-                } catch {}
-              }
+  const loadData = useCallback(async () => {
+    try {
+      let activeIdentifier = session.user?.id || session.user?.email || '';
+      if (!activeIdentifier && typeof window !== 'undefined') {
+        const simMatch = document.cookie.match(/tius_simulated_user=([^;]+)/);
+        if (simMatch) {
+          try {
+            const decoded = simMatch[1].includes('%') ? decodeURIComponent(simMatch[1]) : simMatch[1];
+            const parsed = JSON.parse(decoded);
+            if (parsed?.id) activeIdentifier = parsed.id;
+            else if (parsed?.email) activeIdentifier = parsed.email;
+          } catch {}
+        }
+        if (!activeIdentifier) {
+          const storedEmail = localStorage.getItem('tius_session_email');
+          if (storedEmail) {
+            activeIdentifier = storedEmail;
+          } else {
+            const cookieMatch = document.cookie.match(/tius_session=([^;]+)/);
+            if (cookieMatch) {
+              try {
+                const decoded = cookieMatch[1].includes('%') ? decodeURIComponent(cookieMatch[1]) : cookieMatch[1];
+                const parsed = JSON.parse(decoded);
+                if (parsed?.id) activeIdentifier = parsed.id;
+                else if (parsed?.email) activeIdentifier = parsed.email;
+              } catch {}
             }
           }
         }
-        const [portalData, sysSettings, paySettings] = await Promise.all([
-          getTeacherPortalData(activeIdentifier || 'teacher@tiu.edu.iq'),
-          getSystemSettings(),
-          getPayrollSettings(),
-        ]);
-        setData(portalData);
-        setSystemSettings(sysSettings);
-        setPayrollSettings(paySettings);
-      } catch (err) {
-        console.error('Error loading teacher portal data:', err);
       }
+      const [portalData, sysSettings, paySettings] = await Promise.all([
+        getTeacherPortalData(activeIdentifier || 'teacher@tiu.edu.iq'),
+        getSystemSettings(),
+        getPayrollSettings(),
+      ]);
+      setData(portalData);
+      setSystemSettings(sysSettings);
+      setPayrollSettings(paySettings);
+    } catch (err) {
+      console.error('Error loading teacher portal data:', err);
     }
-    loadData();
   }, [session.user?.id, session.user?.email]);
+
+  useEffect(() => {
+    loadData();
+
+    const supabase = createClient();
+    const channel = supabase
+      .channel('realtime-teacher-requests')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'timesheets' },
+        () => {
+          loadData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadData]);
 
   const userPerms = {
     ...(session.user?.custom_permissions || {}),
@@ -156,6 +174,7 @@ export default function TeacherPortalPage() {
               departmentFaculty={data.teacher?.department?.name || 'Faculty of Computer Engineering & IT'}
               semester="Academic Year 2026–2027"
               selectedMonth={data.activeCycleName || 'Active Cycle: Sep 25 - Oct 25'}
+              weeklyCap={data.teacher.max_weekly_hours != null ? Number(data.teacher.max_weekly_hours) : data.weeklyCapHours || 8.0}
             />
 
             {/* Top Metric Cards (3 Columns: Approved Hours, Pending Hours, Total Requests) */}
