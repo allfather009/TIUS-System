@@ -71,7 +71,7 @@ export const DEFAULT_USERS: Record<UserRole, SessionUser> = {
     email: 'kawa.rashid@tiu.edu.iq',
     role: 'HOD',
     roleTitle: 'Head of Department (HoD)',
-    academic_title: 'Head of Department',
+    academic_title: 'Professor',
     avatarUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCX2p6NwcVU0pCAxARYDeyTLZutJFLjcth9uydwQh63jB3qJH5ALx7OwVMb8vPHGe6pDab5oik_gI9YuypAnWxgp5i5EfTnxdVCPIifX8ust1tuNXFgQljoI51HHI17tXYtwK5jztSqKV4_L7JkW6ROjhPQRkXiN4zcvEDrncOJ7svg7YReLxujgnUW2fsOci80adG1iPGsqtxgj0ABlPu3vFoMpBHtFGHC7wRnTlYOoySnEhPSUsRN',
     staffId: 'TIU-1002',
     departmentName: 'Computer Engineering',

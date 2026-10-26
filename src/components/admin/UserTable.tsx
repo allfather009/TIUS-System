@@ -15,6 +15,7 @@ import {
   Trash2,
   AlertCircle,
   MoreVertical,
+  Building2,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -161,61 +162,68 @@ export function UserTable({
     return items;
   }, [currentPage, totalPages]);
 
+  const getInitials = (name: string) => {
+    if (!name) return 'U';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  };
+
   const getRoleBadge = (role: UserRole) => {
     switch (role) {
       case 'SUPER_ADMIN':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-[#540225]/10 text-[#540225] border border-[#540225]/20">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#540225]" />
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-slate-600" />
             Super Admin
           </span>
         );
       case 'IT_ADMIN':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-50 text-cyan-800 border border-cyan-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-600" />
-            IT Support Admin
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+            IT Support
           </span>
         );
       case 'COORDINATOR':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/70">
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
             Coordinator
           </span>
         );
       case 'DEAN':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-50 text-purple-800 border border-purple-200">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200/70">
             <span className="w-1.5 h-1.5 rounded-full bg-purple-600" />
             Dean
           </span>
         );
       case 'VICE_DEAN':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-fuchsia-50 text-fuchsia-800 border border-fuchsia-200">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200/70">
             <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-600" />
             Vice Dean
           </span>
         );
       case 'HOD':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
-            HoD
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs font-semibold tracking-wide bg-amber-50/80 text-amber-800 border border-amber-200/80">
+            <Building2 className="w-3 h-3 text-amber-700 shrink-0" />
+            Head of Department
           </span>
         );
       case 'ACCOUNTANT':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
-            Accountant
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/70">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+            Finance / Accountant
           </span>
         );
       case 'TEACHER':
       default:
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200">
             <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
             Teacher
           </span>
@@ -427,7 +435,7 @@ export function UserTable({
       </div>
 
       {/* Directory Table Container */}
-      <div className="bg-white rounded-2xl shadow-xs border border-slate-100 overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-xs border border-slate-200/80 overflow-hidden">
         {/* Table Top Bar */}
         <div className="p-4 px-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -441,19 +449,19 @@ export function UserTable({
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-[#eff4ff]/60 border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-400 font-bold">
-                <th className="py-3.5 px-6">Name &amp; Academic Title</th>
-                <th className="py-3.5 px-6">Institutional Email</th>
-                <th className="py-3.5 px-6">Current Department</th>
-                <th className="py-3.5 px-6">Assigned Role</th>
-                <th className="py-3.5 px-6">Status</th>
-                {!isReadOnly && <th className="py-3.5 px-6 text-right">Action</th>}
+              <tr className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                <th className="py-3.5 px-4 align-middle">Staff Member</th>
+                <th className="py-3.5 px-4 align-middle">Academic Title</th>
+                <th className="py-3.5 px-4 align-middle">Department</th>
+                <th className="py-3.5 px-4 align-middle">Assigned Role</th>
+                <th className="py-3.5 px-4 align-middle">Weekly Extra Hours Cap</th>
+                {!isReadOnly && <th className="py-3.5 px-4 text-right align-middle">Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
               {users.length === 0 ? (
                 <tr>
-                  <td colSpan={isReadOnly ? 5 : 6} className="py-16 text-center">
+                  <td colSpan={isReadOnly ? 5 : 6} className="py-16 text-center align-middle">
                     <div className="flex flex-col items-center justify-center max-w-sm mx-auto space-y-2">
                       <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-1">
                         <Search className="w-5 h-5 text-slate-400" />
@@ -467,132 +475,124 @@ export function UserTable({
                 </tr>
               ) : paginatedUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={isReadOnly ? 5 : 6} className="py-12 text-center text-slate-400">
+                  <td colSpan={isReadOnly ? 5 : 6} className="py-12 text-center text-slate-400 align-middle">
                     No faculty or staff members match your filter criteria.
                   </td>
                 </tr>
               ) : (
                 paginatedUsers.map((user) => {
-                  const avatar =
-                    user.avatar_url ||
-                    `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                      user.name
-                    )}&background=e5eeff&color=0b1c30&bold=true`;
+                  const managedIds =
+                    user.managed_department_ids && user.managed_department_ids.length > 0
+                      ? user.managed_department_ids
+                      : user.department_ids && user.department_ids.length > 0
+                      ? user.department_ids
+                      : user.department_id
+                      ? [user.department_id]
+                      : [];
+
+                  const deptMap = new Map(departments.map((d) => [d.id, d.name]));
+                  const resolvedNames = managedIds
+                    .map((id) => deptMap.get(id) || id)
+                    .filter(Boolean);
+
+                  const displayNames =
+                    resolvedNames.length > 0
+                      ? resolvedNames
+                      : user.departments && user.departments.length > 0
+                      ? user.departments
+                      : user.department?.name
+                      ? [user.department.name]
+                      : ['General Academic Department'];
 
                   return (
                     <tr
                       key={user.id}
-                      className="hover:bg-[#f8f9ff] transition-colors group"
+                      className="hover:bg-slate-50/60 transition-colors group"
                     >
-                      {/* Name & Title */}
-                      <td className="py-3.5 px-6">
+                      {/* Staff Member (Combined Name + Email) */}
+                      <td className="py-3.5 px-4 align-middle">
                         <div className="flex items-center gap-3">
-                          <img
-                            src={avatar}
-                            alt={user.name}
-                            className="w-10 h-10 rounded-full object-cover ring-2 ring-slate-100 shadow-2xs shrink-0"
-                          />
+                          <div className="w-9 h-9 rounded-full bg-slate-100 text-slate-700 font-semibold text-xs border border-slate-200/80 flex items-center justify-center shrink-0 shadow-2xs">
+                            {getInitials(user.name)}
+                          </div>
                           <div className="flex flex-col min-w-0">
-                            <span className="font-bold text-[#0b1c30] group-hover:text-[#540225] transition-colors truncate">
+                            <span className="text-slate-900 font-semibold text-sm truncate">
                               {user.name}
                             </span>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-[11px] text-slate-500 truncate">
-                                {user.academic_title || 'Lecturer'}
-                              </span>
-                              {['TEACHER', 'DEAN', 'VICE_DEAN', 'HOD'].includes(user.role) && (
-                                <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
-                                  Cap: {user.max_weekly_hours != null ? user.max_weekly_hours : 8}h/wk
-                                </span>
-                              )}
-                            </div>
+                            <span className="text-slate-500 text-xs font-mono truncate">
+                              {user.email}
+                            </span>
                           </div>
                         </div>
                       </td>
 
-                      {/* Institutional Email */}
-                      <td className="py-3.5 px-6 font-mono text-[11px] text-slate-600">
-                        {user.email}
-                      </td>
-
-                      {/* Department */}
-                      <td className="py-3.5 px-6">
-                        {user.role === 'HOD' ? (
-                          (() => {
-                            const managedIds =
-                              user.managed_department_ids && user.managed_department_ids.length > 0
-                                ? user.managed_department_ids
-                                : user.department_ids && user.department_ids.length > 0
-                                ? user.department_ids
-                                : user.department_id
-                                ? [user.department_id]
-                                : [];
-
-                            const deptMap = new Map(departments.map((d) => [d.id, d.name]));
-                            const resolvedNames = managedIds
-                              .map((id) => deptMap.get(id) || id)
-                              .filter(Boolean);
-
-                            const displayNames =
-                              resolvedNames.length > 0
-                                ? resolvedNames
-                                : user.departments && user.departments.length > 0
-                                ? user.departments
-                                : [user.department?.name || 'General Academic Department'];
-
-                            return (
-                              <div className="flex flex-wrap gap-1.5 max-w-xs">
-                                {displayNames.map((name, idx) => (
-                                  <span
-                                    key={idx}
-                                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs"
-                                  >
-                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-600 shrink-0" />
-                                    <span>{name}</span>
-                                  </span>
-                                ))}
-                              </div>
-                            );
-                          })()
-                        ) : user.departments && user.departments.length > 1 ? (
-                          <div className="flex flex-wrap gap-1 max-w-xs">
-                            {user.departments.map((deptName, idx) => (
-                              <span
-                                key={idx}
-                                className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-blue-50 text-blue-800 border border-blue-200"
-                              >
-                                {deptName}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="font-medium text-slate-700">
-                            {user.department?.name || (user.departments && user.departments[0]) || 'Central Administration'}
+                      {/* Academic Title */}
+                      <td className="py-3.5 px-4 align-middle whitespace-nowrap">
+                        {user.academic_title &&
+                        user.academic_title.toLowerCase().trim() !== 'head of department' ? (
+                          <span className="text-slate-700 text-xs font-medium">
+                            {user.academic_title}
                           </span>
+                        ) : (
+                          <span className="text-slate-400 font-mono text-xs">— Not Assigned —</span>
                         )}
                       </td>
 
-                      {/* Assigned Role */}
-                      <td className="py-3.5 px-6">
-                        <div className="flex items-center gap-2">
-                          {getRoleBadge(user.role)}
+                      {/* Department */}
+                      <td className="py-3.5 px-4 align-middle">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-sm font-medium text-slate-800">
+                            {displayNames[0] || 'Central Administration'}
+                          </span>
+                          {displayNames.length > 1 && (
+                            <span className="text-xs text-slate-500 flex items-center gap-1">
+                              <span className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">
+                                2nd:
+                              </span>{' '}
+                              {displayNames[1]}
+                            </span>
+                          )}
+                          {displayNames.length > 2 &&
+                            displayNames.slice(2).map((deptName, idx) => (
+                              <span key={idx} className="text-xs text-slate-500 flex items-center gap-1">
+                                <span className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">
+                                  {idx + 3}rd:
+                                </span>{' '}
+                                {deptName}
+                              </span>
+                            ))}
                         </div>
                       </td>
 
-                      {/* Status */}
-                      <td className="py-3.5 px-6">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-semibold border border-emerald-100">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                          Active
-                        </span>
+                      {/* Assigned Role */}
+                      <td className="py-3.5 px-4 align-middle whitespace-nowrap">
+                        {getRoleBadge(user.role)}
+                      </td>
+
+                      {/* Weekly Extra Hours Cap */}
+                      <td className="py-3.5 px-4 align-middle whitespace-nowrap">
+                        {['TEACHER', 'HOD', 'DEAN', 'VICE_DEAN'].includes(user.role) ? (
+                          <span className="font-mono text-xs font-medium text-slate-700 bg-slate-50 border border-slate-200/80 px-2 py-0.5 rounded inline-block">
+                            {user.max_weekly_hours != null
+                              ? Number(user.max_weekly_hours).toFixed(1)
+                              : '8.0'}{' '}
+                            hrs/wk
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-xs font-medium">—</span>
+                        )}
                       </td>
 
                       {/* Action */}
                       {!isReadOnly && (
-                        <td className="py-3.5 px-6 text-right">
+                        <td className="py-3.5 px-4 text-right align-middle whitespace-nowrap">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <button className="p-2 rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors cursor-pointer outline-none">
+                              <button
+                                type="button"
+                                aria-label="Actions"
+                                className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 p-1.5 rounded-lg transition-colors cursor-pointer outline-none"
+                              >
                                 <MoreVertical className="w-4 h-4" />
                               </button>
                             </DropdownMenuTrigger>
@@ -614,7 +614,7 @@ export function UserTable({
                                     e.stopPropagation();
                                     onEditUser(user);
                                   }}
-                                  className="gap-2"
+                                  className="gap-2 cursor-pointer"
                                 >
                                   <Edit2 className="w-4 h-4" /> Edit Role
                                 </DropdownMenuItem>
@@ -625,7 +625,7 @@ export function UserTable({
                                     e.stopPropagation();
                                     setUserToDelete(user);
                                   }}
-                                  className="gap-2 text-red-600 focus:text-red-600 focus:bg-red-50"
+                                  className="gap-2 text-rose-600 focus:text-rose-600 focus:bg-rose-50 cursor-pointer"
                                 >
                                   <Trash2 className="w-4 h-4" /> Delete User
                                 </DropdownMenuItem>

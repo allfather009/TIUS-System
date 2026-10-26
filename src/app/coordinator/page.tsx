@@ -22,6 +22,7 @@ import {
   ChevronRight,
   ShieldCheck,
   Coins,
+  Info,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useSession } from '@/lib/context/SessionContext';
@@ -111,6 +112,10 @@ export default function CoordinatorPortalPage() {
     submitting: false,
   });
 
+  // Over-Cap Justification & Rejection Reason View Modal States
+  const [justificationModalRequest, setJustificationModalRequest] = useState<CoordinatorRequest | null>(null);
+  const [viewRejectionReasonRequest, setViewRejectionReasonRequest] = useState<CoordinatorRequest | null>(null);
+
   // Settings & Currency
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
   const [payrollSettings, setPayrollSettings] = useState<PayrollSettings | null>(null);
@@ -132,8 +137,8 @@ export default function CoordinatorPortalPage() {
   };
 
   // Fetch Requests & Auxiliary Data
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [resRequests, deptsList, sysSettings, paySettings] = await Promise.all([
         fetch('/api/requests', { cache: 'no-store' }).then((r) => r.json()),
@@ -150,31 +155,27 @@ export default function CoordinatorPortalPage() {
       setPayrollSettings(paySettings);
     } catch (err) {
       console.error('[Coordinator] Failed to load requests:', err);
-      showToast('Data Error', 'Unable to fetch requests from institutional database.', 'error');
+      if (!silent) {
+        showToast('Data Error', 'Unable to fetch requests from institutional database.', 'error');
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
-  // Realtime subscription for requests/timesheets changes
+  // Silent Background Real-Time Subscription (Headless sync)
   useEffect(() => {
     loadData();
 
     const supabase = createClient();
     const channel = supabase
-      .channel('realtime-requests')
+      .channel('coordinator-realtime-silent')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'timesheets' },
-        (payload: any) => {
-          if (payload.eventType === 'INSERT' && payload.new) {
-            setRequests((prev) => {
-              const newReq = payload.new as CoordinatorRequest;
-              if (prev.some((r) => r.id === newReq.id)) return prev;
-              return [newReq, ...prev];
-            });
-          }
-          loadData();
+        () => {
+          // Silently refetch queue & KPI numbers whenever data changes
+          loadData(true);
         }
       )
       .subscribe();
@@ -460,22 +461,17 @@ export default function CoordinatorPortalPage() {
             {/* Header Block & Primary Actions */}
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
               <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <h1 className="font-headline text-2xl sm:text-3xl font-bold text-[#0b1c30] tracking-tight">
-                    Academic Coordinator Approval Hub
-                  </h1>
-                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-bold border border-emerald-200">
-                    Sole Approval Authority
-                  </span>
-                </div>
+                <h1 className="font-headline text-2xl sm:text-3xl font-bold text-[#0b1c30] tracking-tight">
+                  Academic Coordinator Approval Hub
+                </h1>
                 <p className="text-xs sm:text-sm text-slate-500 max-w-3xl">
                   Central institutional review queue. Inspect and approve or reject extra hours claims submitted by Heads of Department across all university divisions.
                 </p>
               </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center gap-2.5 flex-wrap">
-                {canViewCurrency && systemSettings && (
+              {canViewCurrency && systemSettings && (
+                <div className="flex items-center gap-2.5 flex-wrap">
                   <button
                     type="button"
                     onClick={() => setIsCurrencyModalOpen(true)}
@@ -484,19 +480,8 @@ export default function CoordinatorPortalPage() {
                     <Coins className="w-4 h-4 text-emerald-600 transition-transform group-hover:scale-110" />
                     <span>Rate: {(systemSettings.exchange_rate / 100).toLocaleString()} IQD</span>
                   </button>
-                )}
-
-                <div
-                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-slate-200/80 shadow-2xs text-xs font-semibold text-slate-600"
-                  title="Live data synchronization active"
-                >
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                  <span className="tracking-tight text-slate-600">Live Sync</span>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* KPI Metric Cards */}
@@ -754,7 +739,7 @@ export default function CoordinatorPortalPage() {
                   <thead>
                     <tr className="border-b border-slate-200 bg-[#eff4ff]/50 text-[11px] uppercase tracking-wider text-slate-500 font-bold">
                       {/* Checkbox Column for Pending Items */}
-                      <th className="py-3 px-4 w-12 text-center">
+                      <th className="py-3 px-4 w-12 text-center align-middle">
                         <input
                           type="checkbox"
                           checked={allPendingSelectedOnPage}
@@ -764,19 +749,19 @@ export default function CoordinatorPortalPage() {
                           className="w-4 h-4 rounded border-slate-300 text-[#540225] focus:ring-[#721c3b]/30 cursor-pointer disabled:opacity-30"
                         />
                       </th>
-                      <th className="py-3 px-5">FACULTY BENEFICIARY</th>
-                      <th className="py-3 px-5">DEPARTMENT</th>
-                      <th className="py-3 px-5">SUBMITTED BY (HOD)</th>
-                      <th className="py-3 px-5">COURSE &amp; DELIVERABLE</th>
-                      <th className="py-3 px-4">HOURS</th>
-                      <th className="py-3 px-5">DATE</th>
-                      <th className="py-3 px-5 text-right">ACTIONS / STATUS</th>
+                      <th className="py-3 px-5 align-middle">FACULTY BENEFICIARY</th>
+                      <th className="py-3 px-5 align-middle">DEPARTMENT</th>
+                      <th className="py-3 px-5 align-middle">SUBMITTED BY (HOD)</th>
+                      <th className="py-3 px-5 align-middle">COURSE &amp; DELIVERABLE</th>
+                      <th className="py-3 px-4 align-middle">HOURS</th>
+                      <th className="py-3 px-5 align-middle">DATE</th>
+                      <th className="py-3 px-5 text-right align-middle">ACTIONS / STATUS</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs">
                     {loading ? (
                       <tr>
-                        <td colSpan={8} className="py-16 text-center text-slate-400">
+                        <td colSpan={8} className="py-16 text-center text-slate-400 align-middle">
                           <div className="flex flex-col items-center justify-center gap-2">
                             <RefreshCw className="w-6 h-6 animate-spin text-[#721c3b]" />
                             <span className="font-medium text-xs">Loading requests queue...</span>
@@ -785,7 +770,7 @@ export default function CoordinatorPortalPage() {
                       </tr>
                     ) : paginatedRequests.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="py-16 text-center text-slate-400">
+                        <td colSpan={8} className="py-16 text-center text-slate-400 align-middle">
                           <div className="flex flex-col items-center justify-center gap-1.5 max-w-sm mx-auto">
                             <FileText className="w-8 h-8 text-slate-300" />
                             <h4 className="font-bold text-slate-700 text-sm">No requests found</h4>
@@ -805,21 +790,20 @@ export default function CoordinatorPortalPage() {
                         const isSelected = selectedRequestIds.has(req.id);
                         const isPending = req.status === 'PENDING';
                         const isActing = actionLoadingId === req.id;
-                        const rejectionNote = extractRejectionNote(req.notes);
 
                         return (
                           <tr
                             key={req.id}
-                            className={`transition-colors ${
+                            className={`transition-colors border-b border-slate-100 ${
                               isSelf
-                                ? 'bg-purple-50/30 hover:bg-purple-50/60'
+                                ? 'bg-slate-50/40 hover:bg-slate-50/80'
                                 : isSelected
                                 ? 'bg-amber-50/40 hover:bg-amber-50/60'
                                 : 'hover:bg-[#f8f9ff]'
                             }`}
                           >
                             {/* Checkbox */}
-                            <td className="py-4 px-4 text-center">
+                            <td className="py-3.5 px-4 text-center align-middle">
                               {isPending ? (
                                 <input
                                   type="checkbox"
@@ -834,30 +818,33 @@ export default function CoordinatorPortalPage() {
                             </td>
 
                             {/* Faculty Beneficiary */}
-                            <td className="py-4 px-5">
-                              <div className="space-y-1.5">
+                            <td className="py-3.5 px-5 align-middle">
+                              <div className="flex flex-col gap-0.5">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="font-bold text-[#0b1c30] text-sm">
+                                  <span className="text-slate-900 font-semibold text-sm">
                                     {req.teacher?.name || 'Faculty Member'}
                                   </span>
                                   {isSelf && (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 text-[10px] font-extrabold border border-purple-200 tracking-tight">
+                                    <span className="bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full inline-flex items-center">
                                       HoD Self-Submission
                                     </span>
                                   )}
                                   {req.is_special_condition && (
-                                    <span
-                                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-amber-100 text-amber-950 border border-amber-300 text-[10px] font-extrabold shadow-2xs tracking-tight"
-                                      title={`Requested: ${Number(req.hours).toFixed(1)} hrs | Teacher Cap: ${req.teacher?.max_weekly_hours != null ? req.teacher.max_weekly_hours : 8} hrs`}
+                                    <button
+                                      type="button"
+                                      onClick={() => setJustificationModalRequest(req)}
+                                      className="bg-amber-50 text-amber-700 border border-amber-200/80 text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 hover:bg-amber-100 transition-colors cursor-pointer"
+                                      title="Click to view over-cap authorization details"
                                     >
-                                      ⚠️ Over-Cap Special Request
-                                    </span>
+                                      <span>⚠️</span>
+                                      <span>Over-Cap Request</span>
+                                    </button>
                                   )}
                                 </div>
-                                <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium">
+                                <div className="flex items-center gap-2 text-slate-500 text-xs">
                                   <span>{req.teacher?.academic_title || 'Lecturer'}</span>
                                   <span>•</span>
-                                  <span className="font-mono text-[10px] uppercase px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">
+                                  <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
                                     {req.teacher?.role || 'TEACHER'}
                                   </span>
                                   {req.teacher?.max_weekly_hours != null && (
@@ -869,40 +856,20 @@ export default function CoordinatorPortalPage() {
                                     </>
                                   )}
                                 </div>
-
-                                {/* Calculation Preview and HoD Justification Note */}
-                                {req.is_special_condition && (
-                                  <div className="p-2.5 rounded-xl bg-amber-50/90 border border-amber-200/90 space-y-1 text-xs">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="text-[10px] font-bold text-amber-950 uppercase tracking-wider">
-                                        Calculation Preview:
-                                      </span>
-                                      <span className="text-[11px] font-mono font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded">
-                                        Requested: {Number(req.hours).toFixed(1)} hrs | Teacher Cap: {req.teacher?.max_weekly_hours != null ? req.teacher.max_weekly_hours : 8} hrs
-                                      </span>
-                                    </div>
-                                    {req.special_condition_reason && (
-                                      <div className="text-[11px] text-amber-950 leading-snug pt-0.5">
-                                        <span className="font-bold text-amber-900">HoD Justification: </span>
-                                        <span className="italic">"{req.special_condition_reason}"</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
                               </div>
                             </td>
 
                             {/* Department */}
-                            <td className="py-4 px-5 whitespace-nowrap">
+                            <td className="py-3.5 px-5 whitespace-nowrap align-middle">
                               <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
                                 {req.department || req.teacher?.department?.name || 'Academic Department'}
                               </span>
                             </td>
 
                             {/* Submitted By (HoD) */}
-                            <td className="py-4 px-5 whitespace-nowrap">
+                            <td className="py-3.5 px-5 whitespace-nowrap align-middle">
                               <div className="flex items-center gap-2">
-                                <div className="w-7 h-7 rounded-full bg-amber-50 text-amber-800 text-[10px] font-bold flex items-center justify-center border border-amber-200">
+                                <div className="w-7 h-7 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold flex items-center justify-center border border-slate-200">
                                   {(req.submitted_by?.name || 'HD')
                                     .split(' ')
                                     .map((n) => n[0])
@@ -911,7 +878,7 @@ export default function CoordinatorPortalPage() {
                                     .toUpperCase()}
                                 </div>
                                 <div className="flex flex-col">
-                                  <span className="font-medium text-slate-800">
+                                  <span className="font-medium text-slate-800 text-xs">
                                     {req.submitted_by?.name || 'Head of Department'}
                                   </span>
                                   <span className="text-[10px] text-slate-400 font-mono">
@@ -922,13 +889,13 @@ export default function CoordinatorPortalPage() {
                             </td>
 
                             {/* Course & Deliverable */}
-                            <td className="py-4 px-5 max-w-[220px]">
+                            <td className="py-3.5 px-5 max-w-[220px] align-middle">
                               <div className="space-y-0.5">
                                 <div className="flex items-center gap-1.5">
                                   <span className="px-1.5 py-0.5 rounded text-[11px] font-mono font-bold bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
                                     {req.course_code || 'GEN'}
                                   </span>
-                                  <span className="font-semibold text-slate-800 truncate" title={req.notes || ''}>
+                                  <span className="font-semibold text-slate-800 text-xs truncate" title={req.notes || ''}>
                                     {req.notes || req.session_type || 'Instructional Extra Session'}
                                   </span>
                                 </div>
@@ -939,16 +906,29 @@ export default function CoordinatorPortalPage() {
                             </td>
 
                             {/* Hours Breakdown */}
-                            <td className="py-4 px-4 whitespace-nowrap">
-                              <span className="font-extrabold text-[#721c3b] text-sm">
-                                {Number(req.hours).toFixed(1)} hrs
-                              </span>
+                            <td className="py-3.5 px-4 whitespace-nowrap align-middle">
+                              <div className="flex items-center gap-2">
+                                <span className="font-extrabold text-[#721c3b] text-sm">
+                                  {Number(req.hours).toFixed(1)} hrs
+                                </span>
+                                {req.is_special_condition && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setJustificationModalRequest(req)}
+                                    className="inline-flex items-center gap-1 text-[11px] text-amber-700 hover:text-amber-900 font-medium underline underline-offset-2 transition-colors cursor-pointer"
+                                    title="View over-cap authorization details"
+                                  >
+                                    <Info className="w-3.5 h-3.5 text-amber-600" />
+                                    <span>Note</span>
+                                  </button>
+                                )}
+                              </div>
                             </td>
 
                             {/* Date */}
-                            <td className="py-4 px-5 whitespace-nowrap">
+                            <td className="py-3.5 px-5 whitespace-nowrap align-middle">
                               <div className="flex flex-col">
-                                <span className="font-semibold text-slate-800">{req.date}</span>
+                                <span className="font-semibold text-slate-800 text-xs">{req.date}</span>
                                 <span className="text-[10px] text-slate-400">
                                   {new Date(req.date).toLocaleDateString('en-US', { weekday: 'short' })}
                                 </span>
@@ -956,7 +936,7 @@ export default function CoordinatorPortalPage() {
                             </td>
 
                             {/* Actions / Status */}
-                            <td className="py-4 px-5 text-right whitespace-nowrap">
+                            <td className="py-3.5 px-5 text-right whitespace-nowrap align-middle">
                               {isPending ? (
                                 <div className="flex items-center justify-end gap-2">
                                   {/* Accept Button */}
@@ -985,7 +965,7 @@ export default function CoordinatorPortalPage() {
                                 </div>
                               ) : req.status === 'APPROVED' ? (
                                 <div className="flex flex-col items-end gap-0.5">
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-bold border border-emerald-200">
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold">
                                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                                     Approved
                                   </span>
@@ -1000,18 +980,17 @@ export default function CoordinatorPortalPage() {
                                 </div>
                               ) : (
                                 <div className="flex flex-col items-end gap-1">
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-50 text-rose-800 text-[11px] font-bold border border-rose-200">
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-semibold">
                                     <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
                                     Rejected
                                   </span>
-                                  {rejectionNote && (
-                                    <span
-                                      className="text-[10px] text-rose-700 max-w-[140px] truncate block text-right font-medium"
-                                      title={rejectionNote}
-                                    >
-                                      {rejectionNote}
-                                    </span>
-                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewRejectionReasonRequest(req)}
+                                    className="text-[11px] text-slate-400 hover:text-slate-700 underline underline-offset-2 transition-colors cursor-pointer"
+                                  >
+                                    View Reason
+                                  </button>
                                 </div>
                               )}
                             </td>
@@ -1184,6 +1163,181 @@ export default function CoordinatorPortalPage() {
               >
                 {rejectionModal.submitting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
                 <span>Confirm Rejection</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Over-Cap Authorization Request Modal */}
+      {justificationModalRequest && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full overflow-hidden p-6 space-y-5 animate-in zoom-in-95 duration-200">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700 shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">Over-Cap Authorization Request</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Submitted special condition authorization for weekly cap variance
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setJustificationModalRequest(null)}
+                className="text-slate-400 hover:text-slate-600 rounded-lg p-1 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Faculty Beneficiary Details */}
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between text-xs">
+                <div>
+                  <span className="text-slate-400 uppercase tracking-wider text-[10px] block font-semibold">
+                    Faculty Beneficiary
+                  </span>
+                  <span className="font-bold text-slate-800 text-sm">
+                    {justificationModalRequest.teacher?.name || 'Faculty Member'}
+                  </span>
+                  <span className="text-slate-500 text-[11px] block">
+                    {justificationModalRequest.department ||
+                      justificationModalRequest.teacher?.department?.name ||
+                      'Academic Department'}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-slate-400 uppercase tracking-wider text-[10px] block font-semibold">
+                    Lecture Date
+                  </span>
+                  <span className="font-mono font-medium text-slate-700">
+                    {justificationModalRequest.date}
+                  </span>
+                </div>
+              </div>
+
+              {/* Hours Calculation */}
+              <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200/80 space-y-1.5">
+                <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider block">
+                  Hours Calculation
+                </span>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-600">Teacher Weekly Cap:</span>
+                  <span className="font-mono font-bold text-slate-800">
+                    {justificationModalRequest.teacher?.max_weekly_hours != null
+                      ? justificationModalRequest.teacher.max_weekly_hours
+                      : 8}{' '}
+                    hrs
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-600">Total Requested:</span>
+                  <span className="font-mono font-bold text-[#721c3b]">
+                    {Number(justificationModalRequest.hours).toFixed(1)} hrs
+                  </span>
+                </div>
+              </div>
+
+              {/* HoD Justification */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                  HoD Justification
+                </span>
+                <blockquote className="p-3.5 rounded-xl bg-slate-50 border-l-4 border-amber-500 text-slate-700 text-xs italic leading-relaxed">
+                  "{justificationModalRequest.special_condition_reason ||
+                    'No specific justification provided by the Head of Department.'}"
+                </blockquote>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setJustificationModalRequest(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Rejection Reason Modal */}
+      {viewRejectionReasonRequest && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-md w-full overflow-hidden p-6 space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-700 shrink-0">
+                  <XCircle className="w-5 h-5 text-rose-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">Rejection Feedback</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Coordinator feedback for this extra hours claim
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewRejectionReasonRequest(null)}
+                className="text-slate-400 hover:text-slate-600 rounded-lg p-1 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-xs space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 text-[10px] uppercase font-semibold">Faculty</span>
+                  <span className="font-semibold text-slate-800">
+                    {viewRejectionReasonRequest.teacher?.name || 'Faculty Member'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 text-[10px] uppercase font-semibold">Department</span>
+                  <span className="text-slate-600">
+                    {viewRejectionReasonRequest.department ||
+                      viewRejectionReasonRequest.teacher?.department?.name ||
+                      'Academic Department'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 text-[10px] uppercase font-semibold">Session Date</span>
+                  <span className="font-mono text-slate-700">{viewRejectionReasonRequest.date}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 text-[10px] uppercase font-semibold">Hours</span>
+                  <span className="font-mono font-bold text-slate-800">
+                    {Number(viewRejectionReasonRequest.hours).toFixed(1)} hrs
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                  Coordinator Reason &amp; Comments
+                </span>
+                <div className="p-3.5 rounded-xl bg-rose-50/60 border border-rose-200 text-slate-800 text-xs leading-relaxed whitespace-pre-wrap">
+                  {extractRejectionNote(viewRejectionReasonRequest.notes) ||
+                    'No formal rejection feedback provided.'}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setViewRejectionReasonRequest(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+              >
+                Close
               </button>
             </div>
           </div>

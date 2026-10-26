@@ -3,7 +3,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UniversityUser, Department, UserRole, AcademicRate, SystemSettings } from '@/types/database';
 import { X, ShieldAlert, Check, Building2 } from 'lucide-react';
-import { getAcademicRates, getRateForTitle } from '@/lib/services/rateService';
+import {
+  getAcademicRates,
+  getRateForTitle,
+  DEFAULT_ACADEMIC_RATES,
+} from '@/lib/services/rateService';
 import { getSystemSettings } from '@/lib/services/systemSettingsService';
 import {
   Select,
@@ -112,7 +116,11 @@ export function EditRoleModal({
         ? [departments[0].id]
         : [];
     setSelectedDeptIds(initialDeptIds);
-    setAcademicTitle(user.academic_title || 'Lecturer');
+    const initialTitle =
+      user.academic_title && user.academic_title.toLowerCase().trim() !== 'head of department'
+        ? user.academic_title
+        : '';
+    setAcademicTitle(initialTitle);
     setMaxWeeklyHours(user.max_weekly_hours != null ? Number(user.max_weekly_hours) : 8.0);
     setImageError(false);
   }
@@ -177,13 +185,41 @@ export function EditRoleModal({
   ];
 
   const academicTitleOptions: CustomSelectOption[] = useMemo(() => {
-    return rates
-      .filter((r) => r.is_active !== false || r.title === academicTitle)
-      .map((r) => ({
-        value: r.title,
-        label: `${r.title} — ${fmtRate(Number(r.hourly_rate))}/hr${r.is_active === false ? ' (Deactivated)' : ''}`,
-        badge: fmtRate(Number(r.hourly_rate)),
-      }));
+    const list: CustomSelectOption[] = [
+      {
+        value: '',
+        label: '— Not Assigned (Non-Academic Staff) —',
+      },
+    ];
+
+    const rateItems = rates.length > 0 ? rates : DEFAULT_ACADEMIC_RATES;
+
+    rateItems
+      .filter(
+        (r) =>
+          (r.is_active !== false || r.title === academicTitle) &&
+          r.title.toLowerCase().trim() !== 'head of department'
+      )
+      .forEach((r) => {
+        list.push({
+          value: r.title,
+          label: `${r.title} — ${fmtRate(Number(r.hourly_rate))}/hr${r.is_active === false ? ' (Deactivated)' : ''}`,
+          badge: fmtRate(Number(r.hourly_rate)),
+        });
+      });
+
+    if (
+      academicTitle &&
+      academicTitle.toLowerCase().trim() !== 'head of department' &&
+      !list.some((o) => o.value === academicTitle)
+    ) {
+      list.push({
+        value: academicTitle,
+        label: academicTitle,
+      });
+    }
+
+    return list;
   }, [rates, academicTitle, sysSettings]);
 
   if (!isOpen || !user) return null;
@@ -209,11 +245,16 @@ export function EditRoleModal({
     setSaving(true);
     try {
       const isHodRole = selectedRole === 'HOD';
-      const isTeacherFlow = ['TEACHER', 'DEAN', 'VICE_DEAN'].includes(selectedRole);
-      const calculatedRate =
-        isTeacherFlow
-          ? getRateForTitle(academicTitle, rates)
-          : undefined;
+      const isTeacherOrHodFlow = ['TEACHER', 'HOD', 'DEAN', 'VICE_DEAN'].includes(selectedRole);
+
+      const finalAcademicTitle =
+        academicTitle && academicTitle.toLowerCase().trim() !== 'head of department'
+          ? academicTitle
+          : null;
+
+      const calculatedRate = finalAcademicTitle
+        ? getRateForTitle(finalAcademicTitle, rates)
+        : undefined;
 
       const primaryDeptId = selectedDeptIds[0] || null;
       const finalManagedIds = isHodRole ? selectedDeptIds.slice(0, 2) : [];
@@ -225,11 +266,11 @@ export function EditRoleModal({
       await onSave(
         user.id,
         selectedRole,
-        ['TEACHER', 'HOD', 'DEAN', 'VICE_DEAN'].includes(selectedRole) ? primaryDeptId : null,
-        isTeacherFlow ? academicTitle : user.academic_title,
+        isTeacherOrHodFlow ? primaryDeptId : null,
+        finalAcademicTitle,
         calculatedRate,
-        ['TEACHER', 'HOD', 'DEAN', 'VICE_DEAN'].includes(selectedRole) ? finalDeptIds : null,
-        ['TEACHER', 'HOD', 'DEAN', 'VICE_DEAN'].includes(selectedRole) ? deptNames : null,
+        isTeacherOrHodFlow ? finalDeptIds : null,
+        isTeacherOrHodFlow ? deptNames : null,
         finalManagedIds,
         maxWeeklyHours
       );
@@ -350,31 +391,33 @@ export function EditRoleModal({
             </p>
           </div>
 
-          {/* Mandatory Academic Title Dropdown for Faculty Roles (TEACHER, DEAN, VICE_DEAN) */}
-          {['TEACHER', 'DEAN', 'VICE_DEAN'].includes(selectedRole) && (
-            <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-300 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <span>Academic Title &amp; Hourly Rate Tier</span>
-                  <span className="text-red-500">*</span>
-                </label>
-                <span className="text-xs font-bold text-amber-950 font-mono bg-amber-100/90 px-2.5 py-0.5 rounded-md border border-amber-300">
+          {/* Independent Academic Title Dropdown of University Academic Ranks */}
+          <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-200 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <span>Official Academic Rank / Title</span>
+              </label>
+              {academicTitle ? (
+                <span className="text-xs font-bold text-slate-800 font-mono bg-white px-2.5 py-0.5 rounded-md border border-slate-200 shadow-2xs">
                   {fmtRate(getRateForTitle(academicTitle, rates))} / hr
                 </span>
-              </div>
-              <p className="text-[11px] text-amber-900 leading-snug">
-                Select the official faculty title from the university rate schedule to govern overtime reimbursement.
-              </p>
-              <CustomSelect
-                value={academicTitle}
-                onChange={setAcademicTitle}
-                options={academicTitleOptions}
-                placeholder="Select Title..."
-                variant="amber"
-                placement="bottom"
-              />
+              ) : (
+                <span className="text-[11px] text-slate-400 font-mono">
+                  No Overtime Rate Tier
+                </span>
+              )}
             </div>
-          )}
+            <p className="text-[11px] text-slate-500 leading-snug">
+              Official faculty title from the university academic rank schedule (e.g. Professor, Assistant Professor, Lecturer). Distinct from administrative role (e.g. Head of Department).
+            </p>
+            <CustomSelect
+              value={academicTitle}
+              onChange={setAcademicTitle}
+              options={academicTitleOptions}
+              placeholder="Select Academic Title..."
+              placement="bottom"
+            />
+          </div>
 
           {/* Max Weekly Extra Hours Cap Field */}
           <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-200 space-y-2">

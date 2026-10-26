@@ -37,7 +37,7 @@ export default function HodPage() {
     id: '',
     name: 'Head of Department',
     email: '',
-    academic_title: 'Head of Department',
+    academic_title: '',
     role: 'HOD',
     department_id: null,
     employment_type: 'FULL_TIME',
